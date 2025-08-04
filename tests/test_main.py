@@ -4,6 +4,7 @@ import numpy as np
 import random
 from seating_plan.models import validate_cliques, infer_social_graph, generate_similarity_matrix
 from seating_plan.tables import BanquetTable
+from seating_plan.exceptions import InvalidInput,TableError
 
 def test_validate_cliques():
     cliques = {
@@ -156,14 +157,13 @@ def test_banquet_table_init():
     assert np.all(table11.adjacency_matrix[6,6:] == np.array([0,1]))
     assert np.all(table11.adjacency_matrix[7,7:] == np.array([0]))
     #Check that errors are raised for invalid tables
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput):
         BanquetTable(num_side_seats=5, head_seat=True, foot_seat=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput):
         BanquetTable(num_side_seats=6, head_seat=False, foot_seat=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput):
         BanquetTable(num_side_seats=-1, head_seat=True, foot_seat=False)
-    #Check that warning is printed for num_side_seats < 2
-    with pytest.warns(UserWarning):
+    with pytest.raises(InvalidInput):
         BanquetTable(num_side_seats=1, head_seat=False, foot_seat=False)
 
 def test_banquet_table_assign_side_seat():
@@ -176,10 +176,10 @@ def test_banquet_table_assign_side_seat():
     table.assign_side_seat(guest_id='Bobby', seat_pos=seat_pos)
     assert table.side_seats[seat_pos] == 'Bobby'
     # Check that assigning a side seat out of range raises an error
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput):
         table.assign_side_seat(guest_id=2, seat_pos=6)
     # Check that assigning a side seat with a negative position raises an error
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput):
         table.assign_side_seat(guest_id=3, seat_pos=-1)
 
 def test_banquet_table_assign_head_seat():
@@ -190,7 +190,7 @@ def test_banquet_table_assign_head_seat():
     assert table.head_seat[0] == 'Anca'
     # Check that assigning a head seat when no head seat is available raises an error
     table_no_head = BanquetTable(num_side_seats=6, head_seat=False)
-    with pytest.raises(ValueError):
+    with pytest.raises(TableError):
         table_no_head.assign_head_seat(guest_id='Bobby')
 
 def test_banquet_table_assign_foot_seat():
@@ -201,7 +201,7 @@ def test_banquet_table_assign_foot_seat():
     assert table.foot_seat[0] == 'Anca'
     # Check that assigning a foot seat when no foot seat is available raises an error
     table_no_foot = BanquetTable(num_side_seats=6, head_seat=True, foot_seat=False)
-    with pytest.raises(ValueError):
+    with pytest.raises(TableError):
         table_no_foot.assign_foot_seat(guest_id='Bobby')
 
 def test_banquet_table_compute_score():
@@ -219,7 +219,7 @@ def test_banquet_table_compute_score():
     for seat_pos in range(6):
         table.assign_side_seat(guest_id=data[seat_pos+1]['name'], seat_pos=seat_pos)
 
-    score = table.compute_score(matrix, id_dict)
+    score = table.compute_score(matrix, id_dict,param=1.0)
     # Check that the score is a non-negative float
     assert isinstance(score, float)
     assert 0 <= score 
@@ -228,6 +228,7 @@ def test_banquet_table_compute_score():
     disconnected_table.assign_side_seat(guest_id=data[0]['name'], seat_pos=0)
     disconnected_table.assign_side_seat(guest_id=data[1]['name'], seat_pos=3)
     disconnected_table.assign_side_seat(guest_id=data[2]['name'], seat_pos=4)
-    disconnected_score = disconnected_table.compute_score(matrix, id_dict)
+    with pytest.warns(UserWarning):
+        disconnected_score = disconnected_table.compute_score(matrix, id_dict)
     # Check that the score is zero for disconnected seats
     assert disconnected_score == 0.0

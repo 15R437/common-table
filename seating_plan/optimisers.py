@@ -72,7 +72,7 @@ class SimAnnealer(Annealer):
         return total_score
 
 #rough test
-data =[
+"""data =[
     {'name':'Anca', 'relational_tags':['htb','st_saviour','acton']},
     {'name':'Madison', 'relational_tags':['htb','acton']},
     {'name':'Tekena', 'relational_tags':['htb','kcl']},
@@ -106,4 +106,4 @@ for score_param in np.arange(0,1.1,0.1):
     for table in best_state:
         print(f"Table seats: {table.seats}")
     print("\n")
-
+"""

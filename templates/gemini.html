@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seating Planner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../static/css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-6 md:p-10">
+
+    <div class="container mx-auto flex flex-col items-center py-12">
+
+        <!-- Home Page -->
+        <div id="step-home" class="step-active flex flex-col items-center text-center">
+            <h1 class="text-5xl font-bold text-gray-800 mb-4">Seating Planner</h1>
+            <p class="text-xl text-gray-600 mb-8 max-w-lg">
+                Your elegant solution for creating perfect seating arrangements.
+                Simple, fast, and personalized.
+            </p>
+            <button id="try-now-btn" class="btn btn-primary text-lg">Try Now</button>
+        </div>
+
+        <!-- Step 1: Seating Style -->
+        <div id="step-1" class="step-container flex-col items-center w-full">
+            <h2 class="text-3xl font-semibold text-gray-800 mb-8">1. Seating Style</h2>
+            <div class="card w-full mb-8">
+                <div class="flex flex-col md:flex-row md:space-x-8 space-y-4 md:space-y-0">
+                    <div class="flex-1 p-6 text-center border-2 border-gray-200 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
+                        <svg class="h-16 w-16 mx-auto mb-4 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="10" />
+                        </svg>
+                        <span class="text-lg font-medium text-gray-700">Round Tables</span>
+                    </div>
+                    <div class="flex-1 p-6 text-center border-2 border-gray-200 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
+                        <svg class="h-16 w-16 mx-auto mb-4 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M4 4h16v16H4z" />
+                        </svg>
+                        <span class="text-lg font-medium text-gray-700">Rectangular Tables</span>
+                    </div>
+                </div>
+
+                <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label for="num-tables" class="block text-sm font-medium text-gray-700">Number of Tables</label>
+                        <input type="number" id="num-tables" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label for="num-chairs" class="block text-sm font-medium text-gray-700">Chairs per Table</label>
+                        <input type="number" id="num-chairs" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                </div>
+            </div>
+            <button id="step1-next-btn" class="btn btn-primary self-end">Next</button>
+        </div>
+
+        <!-- Step 2: Guest Details -->
+        <div id="step-2" class="step-container flex-col items-center w-full">
+            <h2 class="text-3xl font-semibold text-gray-800 mb-8">2. Guest Details</h2>
+            <div class="card w-full mb-8 flex flex-col items-center text-center">
+                <div class="w-full">
+                    <label for="file-upload" class="flex justify-center items-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:border-indigo-500 transition-colors">
+                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                            <svg class="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-4-4v0a4 4 0 014-4h4.586a1 1 0 01.707.293l2.414 2.414a1 1 0 00.707.293h3.586a1 1 0 01.707.293l2.414 2.414a1 1 0 00.707.293H21a1 1 0 011 1v2a1 1 0 01-1 1h-7a1 1 0 01-1-1v-2a1 1 0 00-1-1h-2a1 1 0 00-1-1z"></path>
+                            </svg>
+                            <p class="mb-2 text-sm text-gray-500"><span class="font-semibold">Click to upload</span> or drag and drop</p>
+                            <p class="text-xs text-gray-500">Excel or CSV file</p>
+                        </div>
+                        <input id="file-upload" type="file" class="hidden" />
+                    </label>
+                </div>
+                <p class="mt-4 text-gray-500 italic">Example: You can also enter guest details manually here.</p>
+            </div>
+            <button id="step2-next-btn" class="btn btn-primary self-end">Next</button>
+        </div>
+
+        <!-- Step 3: Parameters -->
+        <div id="step-3" class="step-container flex-col items-center w-full">
+            <h2 class="text-3xl font-semibold text-gray-800 mb-8">3. Preferences</h2>
+            <div class="card w-full mb-8">
+                <h3 class="text-xl font-medium text-gray-800 mb-4">Seating Style Preference</h3>
+                <div class="flex flex-col space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Familiarity vs. New Friends</label>
+                        <input type="range" class="w-full mt-2" min="0" max="100" value="50">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>More with familiar people</span>
+                            <span>More with new people</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <button id="generate-plan-btn" class="btn btn-primary self-end">Generate Plan</button>
+        </div>
+
+        <!-- Final Output: Seating Plan -->
+        <div id="step-4" class="step-container flex-col items-center w-full">
+            <h2 class="text-3xl font-semibold text-gray-800 mb-8">Proposed Seating Plan</h2>
+            <div class="card w-full">
+                <div class="seating-plan-grid">
+                    <!-- Example of one round table -->
+                    <div class="table-round mx-auto">
+                        <div class="chair" style="top: -15px; left: 50%; transform: translateX(-50%);" data-guest="John Doe">JD</div>
+                        <div class="chair" style="top: 15px; left: 88%; transform: rotate(45deg) translate(-50%, -50%);" data-guest="Jane Smith">JS</div>
+                        <div class="chair" style="top: 50%; left: 115%; transform: rotate(90deg) translate(-50%, -50%);" data-guest="Peter Jones">PJ</div>
+                        <div class="chair" style="top: 88%; left: 85%; transform: rotate(135deg) translate(-50%, -50%);" data-guest="Sarah Lee">SL</div>
+                        <div class="chair" style="top: 115%; left: 50%; transform: rotate(180deg) translate(-50%, -50%);" data-guest="Mike Ross">MR</div>
+                        <div class="chair" style="top: 88%; left: 12%; transform: rotate(225deg) translate(-50%, -50%);" data-guest="Lisa Chen">LC</div>
+                        <div class="chair" style="top: 50%; left: -15%; transform: rotate(270deg) translate(-50%, -50%);" data-guest="Tom Brown">TB</div>
+                        <div class="chair" style="top: 12%; left: 12%; transform: rotate(315deg) translate(-50%, -50%);" data-guest="Emily White">EW</div>
+                    </div>
+                    <div class="table-round mx-auto">
+                        <!-- Another table for visual representation -->
+                    </div>
+                    <div class="table-round mx-auto">
+                        <!-- Another table for visual representation -->
+                    </div>
+                </div>
+            </div>
+            <p class="text-center text-sm text-gray-500 mt-4">Click on a guest to view their details.</p>
+        </div>
+
+        <!-- Guest Info Modal (Mock) -->
+        <div id="guest-info-modal" class="card hidden p-6 text-center">
+            <h3 id="modal-guest-name" class="text-xl font-bold mb-2"></h3>
+            <p class="text-gray-600 mb-4">Details about the guest would appear here.</p>
+            <p class="text-sm text-gray-500">Relationship to others, preferences, etc.</p>
+            <button id="close-modal-btn" class="btn btn-secondary mt-4">Close</button>
+        </div>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const steps = ['home', '1', '2', '3', '4'];
+            let currentStep = 0;
+
+            const updateStep = () => {
+                steps.forEach((step, index) => {
+                    const el = document.getElementById(`step-${step}`);
+                    if (el) {
+                        el.classList.remove('step-active');
+                        if (index === currentStep) {
+                            el.classList.add('step-active');
+                        }
+                    }
+                });
+            };
+
+            document.getElementById('try-now-btn').addEventListener('click', () => {
+                currentStep = 1;
+                updateStep();
+            });
+
+            document.getElementById('step1-next-btn').addEventListener('click', () => {
+                currentStep = 2;
+                updateStep();
+            });
+
+            document.getElementById('step2-next-btn').addEventListener('click', () => {
+                currentStep = 3;
+                updateStep();
+            });
+
+            document.getElementById('generate-plan-btn').addEventListener('click', () => {
+                currentStep = 4;
+                updateStep();
+            });
+
+            // Mock chair click interaction
+            document.querySelectorAll('.chair').forEach(chair => {
+                chair.addEventListener('click', (e) => {
+                    const guestName = e.target.dataset.guest;
+                    document.getElementById('modal-guest-name').textContent = guestName;
+                    document.getElementById('guest-info-modal').style.display = 'block';
+                });
+            });
+
+            document.getElementById('close-modal-btn').addEventListener('click', () => {
+                document.getElementById('guest-info-modal').style.display = 'none';
+            });
+        });
+    </script>
+</body>
+</html>

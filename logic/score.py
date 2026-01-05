@@ -1,3 +1,7 @@
+"""
+A series of functions useful for predicting the expected connection score of two people based on data provided.
+"""
+
 from collections import defaultdict
 import numpy as np
 import warnings

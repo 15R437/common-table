@@ -3,7 +3,7 @@ import os
 import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import random
-from seating_plan.tables import Table
+from tables import Table
 from simanneal import Annealer
 from seating_plan.exceptions import OptimiserError,InvalidInput
 from seating_plan.models import generate_similarity_matrix

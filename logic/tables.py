@@ -1,7 +1,7 @@
 import numpy as np
 import warnings
-from seating_plan.exceptions import InvalidInput,TableError
-from seating_plan import validation
+from exceptions import InvalidInput,TableError
+from logic.validation import *
 
 class Table:
     def __init__(self,num_seats):
@@ -10,7 +10,7 @@ class Table:
         self.adjacency_matrix = np.zeros((num_seats,num_seats))
     
     def assign_seat(self,guest_id,seat_pos):
-        if validation.is_integer_at_least_n(seat_pos,0) and seat_pos < self.num_seats:
+        if is_integer_at_least_n(seat_pos,0) and seat_pos < self.num_seats:
             self.seats[seat_pos] = guest_id
         else:
             raise InvalidInput(f"seat_pos ({seat_pos}) should be an integer between 0 and {self.num_seats-1} inclusive.")
@@ -21,7 +21,7 @@ class Table:
         Mean Scores are the average of all scores between connected pairs of guests sitting at the table.
         Min-Max Scores are the minimum of the maximum scores for each guest at the table.
         """
-        if not validation.is_valid_matrix_id_dict(matrix, id_dict):
+        if not is_valid_matrix_id_dict(matrix, id_dict):
             raise InvalidInput("Invalid matrix and id_dict combination.")
         if not 0 <= param <= 1:
             raise InvalidInput("param should be between 0 and 1 inclusive.")
@@ -54,7 +54,7 @@ class BanquetTable(Table):
             raise InvalidInput("If foot seat is present, head seat must also be present.")
         if head_seat and foot_seat and num_side_seats%2:
             raise InvalidInput("If both head and foot seats are present, num_side_seats must be even.")
-        if not validation.is_integer_at_least_n(num_side_seats,2):
+        if not is_integer_at_least_n(num_side_seats,2):
             raise InvalidInput(f"num_side_seats ({num_side_seats}) should be an integer greater than or equal to 2.")
 
         super().__init__(num_seats=num_side_seats+int(head_seat)+int(foot_seat))
@@ -99,7 +99,7 @@ class BanquetTable(Table):
             
         
     def assign_side_seat(self,guest_id,seat_pos):
-        if validation.is_integer_at_least_n(seat_pos,0) and seat_pos < len(self.side_seats):
+        if is_integer_at_least_n(seat_pos,0) and seat_pos < len(self.side_seats):
             self.side_seats[seat_pos] = guest_id
             self.seats[bool(self.head_seat)+seat_pos] = guest_id
         else:

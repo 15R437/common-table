@@ -2,6 +2,8 @@
 A series of functions useful for predicting the expected connection score of two people based on data provided.
 """
 
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 from collections import defaultdict
 import numpy as np
 import warnings
@@ -62,7 +64,7 @@ def infer_social_graph(data,relation_key_word='relational_tags',id_key_word='id'
 
     return valid_cliques,errors
 
-def generate_similarity_matrix(data, relation_key_word='relational_tags',id_key_word='id'):
+def generate_relation_matrix(data, relation_key_word='relational_tags',id_key_word='id'):
     """
     Generate a similarity matrix from guest data
     
@@ -76,7 +78,7 @@ def generate_similarity_matrix(data, relation_key_word='relational_tags',id_key_
     
     
     n = len(data)
-    similarity_matrix = np.zeros((n, n))
+    relation_matrix = np.zeros((n, n))
 
     for i in range(n):
         for j in range(i + 1, n):
@@ -88,7 +90,32 @@ def generate_similarity_matrix(data, relation_key_word='relational_tags',id_key_
                 if clique in cliques:
                     similarity_score += 1/len(cliques[clique])
         
-            similarity_matrix[i][j] = similarity_score
-            similarity_matrix[j][i] = similarity_score
+            relation_matrix[i][j] = similarity_score
+            relation_matrix[j][i] = similarity_score
 
-    return similarity_matrix,id_dict
+    return relation_matrix,id_dict
+
+def generate_similarity_matrix(data,nl_column='description'):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    embeddings = model.encode(data[nl_column])
+    similarity_matrix = cosine_similarity(embeddings)
+    
+    return similarity_matrix
+
+def generate_matrix(data, relation_key_word='relational_tags', id_key_word='id', openess_key_word='openess', hard_constraints=None):  
+
+    pass
+
+if __name__ == "__main__":
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    data = ["I enjoy listening to music",
+            "I am a GP. I love cooking",
+            "I am a software engineer. I play drums.",
+            "I am a PhD student. I love going to the gym.",
+            "Mbewe",
+            "Mbewe",
+            "mbewe"]
+    embeddings = model.encode(data)
+    similarity_matrix = cosine_similarity(embeddings)
+    print(similarity_matrix)
+    

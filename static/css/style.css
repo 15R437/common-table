@@ -44,15 +44,31 @@
     z-index: 20;
 }
 
-.style-card:hover .table-banquet{
-    background-color: var(--brand-dark);
-    /* Optional: make it glow slightly */
+.style-card:hover span,
+.style-card.is-selected span {
+    color: var(--dark) !important;
+}
+
+.style-card:hover:not(.is-selected){
+    border-color: var(--dark) !important;
+    opacity: 0.8;
+}
+.style-card.is-selected {
+    border-color: var(--dark) !important;
+    background-color: rgba(72, 61, 139, 0.05);
     box-shadow: 0 0 15px rgba(72, 61, 139, 0.3); 
 }
-.style-card:hover .seat {
-    background-color: var(--brand-dark);
-    border-color: var(--brand-dark);
-    opacity: 0.9;
+
+.style-card:hover .table-banquet,
+.style-card:hover .table-cabaret,
+.style-card.is-selected .table-banquet,
+.style-card.is-selected .table-cabaret{
+    background-color: var(--dark) !important;
+    
+}
+.style-card:hover .seat,
+.style-card.is-selected .seat {
+    background-color: var(--dark) !important;
 }
 
 

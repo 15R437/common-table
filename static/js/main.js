@@ -36,7 +36,7 @@ function drawBanquetTable(containerId,numTables=1,numSeatsPerTable=7,headSeat=tr
     wrapperWidth=192,wrapperHeight=192){
     const canvas = document.getElementById(containerId);
     canvas.innerHTML = '';
-    canvas.className = "relative h-full w-full flex flex-wrap justify-center items-center gap-8 p-4";
+    //canvas.className = "relative h-full w-full flex flex-wrap justify-center items-center gap-8 p-4";
 
     for(let i = 0; i < numTables; i++){
         const tableWrapper = document.createElement('div');
@@ -106,7 +106,7 @@ function drawBanquetTable(containerId,numTables=1,numSeatsPerTable=7,headSeat=tr
 function drawCabaretTable(containerId,numTables=1,numSeatsPerTable=6,wrapperWidth=192,wrapperHeight=192){
     const canvas = document.getElementById(containerId);
     canvas.innerHTML = '';
-    canvas.className = "relative h-full w-full flex flex-wrap justify-center items-center gap-8 p-4";
+    //canvas.className = "relative h-full w-full flex flex-wrap justify-center items-center gap-8 p-4";
     
     for(let i = 0; i < numTables; i++){
         const tableWrapper = document.createElement('div');
@@ -156,7 +156,7 @@ function drawTheatre(containerId,numRows=2,numSeatsPerRow=4,wrapperWidth=192){
     //"Table" == "Row"
     const canvas = document.getElementById(containerId);
     canvas.innerHTML = '';
-    canvas.className = "relative h-full w-full flex flex-wrap justify-center items-center gap-8 p-4";
+    //canvas.className = "relative h-full w-full flex flex-wrap justify-center items-center gap-8 p-4";
     const totalHeight = canvas.offsetHeight || 192;
     const padding = 16;
     const gap = (numRows - 1) * 8;
@@ -211,32 +211,63 @@ function setupCheckboxLogic() {
     });
 }
 
+function setupInputListeners() {
+    const tableQtyInput = document.getElementById('table-qty-input');
+    const seatQtyInput = document.getElementById('seat-qty-input');
+    const headCheck = document.getElementById('check-head');
+    const footCheck = document.getElementById('check-foot');
+    const nextBtn = elements.nextBtn;
+
+    function checkInputsValid() {
+        const tableQty = parseInt(tableQtyInput.value) || 0;
+        const seatQty = parseInt(seatQtyInput.value) || 0;
+        
+        // Both inputs must have valid values
+        if (tableQty > 0 && seatQty > 0) {
+            nextBtn.classList.remove('hidden');
+            return true;
+        } else {
+            nextBtn.classList.add('hidden');
+            return false;
+        }
+    }
+
+    // Listen for input changes
+    tableQtyInput.addEventListener('change', checkInputsValid);
+    tableQtyInput.addEventListener('input', checkInputsValid);
+    seatQtyInput.addEventListener('change', checkInputsValid);
+    seatQtyInput.addEventListener('input', checkInputsValid);
+
+    // Handle Next button click
+    nextBtn.addEventListener('click', function() {
+        appState.inputData.numTables = parseInt(tableQtyInput.value);
+        appState.inputData.numSeatsPerTable = parseInt(seatQtyInput.value);
+        appState.inputData.headSeat = headCheck.checked;
+        appState.inputData.footSeat = footCheck.checked;
+        
+        console.log("Step 1 Complete:", appState.inputData);
+        // TODO: Move to step 2
+    });
+}
+
 function setupCardListeners() {
     const cards = document.querySelectorAll('.style-card');
     
     cards.forEach(card => {
         card.addEventListener('click', function() {
-            const vizDiv = this.querySelector('[id^="viz-"]');
-            if (vizDiv) {
-                const style = vizDiv.id.replace('viz-', '');
-                selectStyle(style);
-            }
+            selectStyle(this);
         });
     });
 }
-function selectStyle(style) {
-    console.log("Style Selected:", style);
+
+function selectStyle(cardElement) {
+    const style = cardElement.dataset.style;
     appState.inputData.seatingStyle = style;
     document.querySelectorAll('.style-card').forEach(card => {
-        card.classList.remove('border-brand', 'ring-2', 'ring-brand/20');
-        card.classList.add('border-slate-200');
-        const label = card.querySelector('span');
-        if (label) {
-            label.classList.replace('text-brand-dark', 'text-slate-400');
-        }
+        card.classList.remove('is-selected');
     });
-    const currentCard = document.getElementById(`viz-${style}`).closest('.style-card');
-    currentCard.classList.add('border-brand-dark', 'bg-brand-dark/5', 'ring-2', 'ring-brand-dark');
+    
+    cardElement.classList.add('is-selected');
 
     const inputContainer = document.getElementById('setup-details');
     inputContainer.classList.remove('hidden');
@@ -262,10 +293,19 @@ function selectStyle(style) {
     inputContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+function selectNext(){
+
+}
+
 function init() {
     console.log("CommonTable App Initialized");
     renderPreviews(); // Set the initial step and progress
 }
 
-init();
-document.addEventListener('DOMContentLoaded', ()=>{setupCheckboxLogic();setupCardListeners()});
+
+document.addEventListener('DOMContentLoaded', () => {
+    init(); // Render previews once the DOM is ready
+    setupCheckboxLogic();
+    setupCardListeners();
+    setupInputListeners();
+});

@@ -1,14 +1,15 @@
 import sys
 import os
 import numpy as np
+import torch.nn as nn
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import random
-from tables import Table
+from logic.tables import Table
 from simanneal import Annealer
-from seating_plan.exceptions import OptimiserError,InvalidInput
-from seating_plan.models import generate_similarity_matrix
-from seating_plan.tables import BanquetTable
-from seating_plan.validation import is_valid_matrix_id_dict
+from exceptions import OptimiserError,InvalidInput
+from logic.score import generate_relation_matrix
+from logic.tables import BanquetTable
+from logic.validation import is_valid_matrix_id_dict
 
 # This file contains various optimisers for the seating plan problem.
 
@@ -71,39 +72,41 @@ class SimAnnealer(Annealer):
         
         return total_score
 
+class GradLearner(nn.Module):
+    pass
 #rough test
-"""data =[
-    {'name':'Anca', 'relational_tags':['htb','st_saviour','acton']},
-    {'name':'Madison', 'relational_tags':['htb','acton']},
-    {'name':'Tekena', 'relational_tags':['htb','kcl']},
-    {'name':'Josh', 'relational_tags':['htb','kcl']},
-    {'name':'Melissa', 'relational_tags':['htb']},
-    {'name':'Kate', 'relational_tags':['ual']},
-    {'name':'Mel', 'relational_tags':['ual']},
-    {'name':'Julia', 'relational_tags':['cambridge']},
-    {'name':'Alex', 'relational_tags':['cambridge','ags']},
-    {'name':'Danny', 'relational_tags':['ags','htb']},
-    {'name':'Success', 'relational_tags':['ags','cambridge']},
-    {'name':'Judah', 'relational_tags':['htb','st_saviour','acton']},
-    {'name':'Amet', 'relational_tags':['htb','st_saviour','acton']},
-    {'name':'Judd', 'relational_tags':['htb','acton']},
-    {'name':'Hannah', 'relational_tags':['htb','acton']}
-]
-data = random.sample(data,len(data))
-matrix,id_dict = generate_similarity_matrix(data,relation_key_word='relational_tags',id_key_word='name')
-table1 = BanquetTable(num_side_seats=6,head_seat=True,foot_seat=True)
-table2 = BanquetTable(num_side_seats=6,head_seat=True,foot_seat=True)
-for pos in range(8):
-    table1.assign_seat(data[pos]['name'],pos)
-    if pos < 7:
-        table2.assign_seat(data[pos+8]['name'],pos)
-initial_state = [table1,table2]
-for score_param in np.arange(0,1.1,0.1):
-    annealer = SimAnnealer(initial_state=initial_state, score_matrix=matrix, id_dict=id_dict, score_param=score_param)
-    best_state, best_energy = annealer.anneal()
-    print(f"Score parameter: {score_param}")
-    print(f"Best energy: {best_energy}")
-    for table in best_state:
-        print(f"Table seats: {table.seats}")
-    print("\n")
-"""
+if __name__=="__main__":
+    data =[
+        {'name':'Anca', 'relational_tags':['htb','st_saviour','acton']},
+        {'name':'Madison', 'relational_tags':['htb','acton']},
+        {'name':'Tekena', 'relational_tags':['htb','kcl']},
+        {'name':'Josh', 'relational_tags':['htb','kcl']},
+        {'name':'Melissa', 'relational_tags':['htb']},
+        {'name':'Kate', 'relational_tags':['ual']},
+        {'name':'Mel', 'relational_tags':['ual']},
+        {'name':'Julia', 'relational_tags':['cambridge']},
+        {'name':'Alex', 'relational_tags':['cambridge','ags']},
+        {'name':'Danny', 'relational_tags':['ags','htb']},
+        {'name':'Success', 'relational_tags':['ags','cambridge']},
+        {'name':'Judah', 'relational_tags':['htb','st_saviour','acton']},
+        {'name':'Amet', 'relational_tags':['htb','st_saviour','acton']},
+        {'name':'Judd', 'relational_tags':['htb','acton']},
+        {'name':'Hannah', 'relational_tags':['htb','acton']}
+    ]
+    data = random.sample(data,len(data))
+    matrix,id_dict = generate_relation_matrix(data,relation_key_word='relational_tags',id_key_word='name')
+    table1 = BanquetTable(num_side_seats=6,head_seat=True,foot_seat=True)
+    table2 = BanquetTable(num_side_seats=6,head_seat=True,foot_seat=True)
+    for pos in range(8):
+        table1.assign_seat(data[pos]['name'],pos)
+        if pos < 7:
+            table2.assign_seat(data[pos+8]['name'],pos)
+    initial_state = [table1,table2]
+    for score_param in np.arange(0,1.1,0.1):
+        annealer = SimAnnealer(initial_state=initial_state, score_matrix=matrix, id_dict=id_dict, score_param=score_param)
+        best_state, best_energy = annealer.anneal()
+        print(f"Score parameter: {score_param}")
+        print(f"Best energy: {best_energy}")
+        for table in best_state:
+            print(f"Table seats: {table.seats}")
+        print("\n")

@@ -135,10 +135,9 @@ class SeatingRequest(BaseModel):
     tables: List[TableType]
     constraints: List[Constraint]
 
-class TableAssignment(BaseModel):
-    table_id: str | int
-    assigned_guest_ids: List[str | int]
-
 class SeatingResponse(BaseModel):
-    assignments: List[TableAssignment]
-    score: float = Field(..., description="The score for this seating arrangement.")
+    table_assignments: dict[str | int, dict[int,Guest]]
+    avg_score: float = Field(..., description="The score for this seating arrangement.")
+    must_sit_together: tuple[int,int]
+    could_sit_together: tuple[int,int]
+    must_sit_apart: tuple[int,int]

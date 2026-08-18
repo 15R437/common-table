@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from app.schema import Guest, Constraint, BanquetTable
-from app.models import GradSolver, regularised_surjective_init
+from app.solvers import GradSolver, regularised_surjective_init
 
 
 # --- Solver._get_relation_matrix -------------------------------------------
@@ -198,21 +198,21 @@ def test_regularised_surjective_init_handles_n_low_less_than_n_high():
 # --- GradSolver.__init__ -----------------------------------------------------
 
 def test_gradsolver_guest_logits_shape(sample_guests_and_constraints, sample_banquet_tables):
-    """guest_logits should be shape (n_guests, n_seats)."""
+    """guest_logits should be square (max(n_guests, n_seats) each way), padded with dummy rows/cols."""
     data = sample_guests_and_constraints(num_guests=5, num_constraints=2, seed=1)
     tables = sample_banquet_tables(num_seats_per_table=[8])
     solver = GradSolver(guest_list=data["guest_list"], table_list=tables, constraints=data["constraints"])
 
-    assert solver.guest_logits.shape == (5, 8)
+    assert solver.guest_logits.shape == (8, 8)
 
 
 def test_gradsolver_seat_logits_shape(sample_guests_and_constraints, sample_banquet_tables):
-    """seat_logits should be shape (n_seats, n_guests)."""
+    """seat_logits should be square (max(n_guests, n_seats) each way), padded with dummy rows/cols."""
     data = sample_guests_and_constraints(num_guests=5, num_constraints=2, seed=1)
     tables = sample_banquet_tables(num_seats_per_table=[8])
     solver = GradSolver(guest_list=data["guest_list"], table_list=tables, constraints=data["constraints"])
 
-    assert solver.seat_logits.shape == (8, 5)
+    assert solver.seat_logits.shape == (8, 8)
 
 
 def test_gradsolver_parameters_are_registered(sample_guests_and_constraints, sample_banquet_tables):
@@ -309,7 +309,7 @@ def test_train_history_has_expected_keys(sample_guests_and_constraints, sample_b
 
     history = solver.train(lambda_guest=1, lambda_seat=1, lambda_ce=0.1, num_epochs=3, verbose=False)
 
-    assert set(history.keys()) == {"guest_score", "seat_score", "ce", "T_guest", "T_seats"}
+    assert set(history.keys()) == {"guest_score", "seat_score", "cross_entropy", "T_guest", "T_seats"}
 
 
 def test_train_history_length_matches_num_epochs(sample_guests_and_constraints, sample_banquet_tables):
@@ -323,7 +323,7 @@ def test_train_history_length_matches_num_epochs(sample_guests_and_constraints, 
 
     assert len(history["guest_score"]) == num_epochs
     assert len(history["seat_score"]) == num_epochs
-    assert len(history["ce"]) == num_epochs
+    assert len(history["cross_entropy"]) == num_epochs
 
 
 def test_train_keep_history_false_returns_empty_lists(sample_guests_and_constraints, sample_banquet_tables):
@@ -336,7 +336,7 @@ def test_train_keep_history_false_returns_empty_lists(sample_guests_and_constrai
 
     assert history["guest_score"] == []
     assert history["seat_score"] == []
-    assert history["ce"] == []
+    assert history["cross_entropy"] == []
 
 
 def test_train_gradients_do_not_accumulate_across_epochs(sample_guests_and_constraints, sample_banquet_tables, monkeypatch):

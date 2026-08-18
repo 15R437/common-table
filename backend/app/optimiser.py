@@ -1,7 +1,51 @@
-from .schema import SeatingRequest, SeatingResponse, TableAssignment
+import numpy as np
+from .schema import SeatingRequest, SeatingResponse
+from .solvers import GradSolver
+
+NUM_EPOCHS = 300
+LAMBDA_GUEST = 1
+LAMBDA_SEAT = 1
+LAMBDA_CE = 50
 
 def solve(request: SeatingRequest) -> SeatingResponse:
-    assignments = None
-    score = 0.0
+    guest_list = request.guests
+    table_list = request.tables
+    constraints = request.constraints
 
-    return SeatingResponse(assignments=assignments, score=score)
+    total_seats = sum(table.num_seats for table in table_list)
+    if len(guest_list) > total_seats:
+        raise ValueError(
+            f"{len(guest_list)} guests but only {total_seats} seats available across all tables."
+        )
+
+    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='uniform')
+    model.train(
+        lambda_guest=LAMBDA_GUEST,
+        lambda_seat=LAMBDA_SEAT,
+        lambda_ce=LAMBDA_CE,
+        num_epochs=NUM_EPOCHS,
+        keep_history=False,
+        verbose=False,
+    )
+    result = model.extract_hard_seating()
+
+    table_capacity = [table.num_seats for table in table_list]
+    table_cumulative_capacity = np.cumsum(table_capacity)
+
+    table_assignments = {table.id: {} for table in table_list}
+    global_assignments = result['assignment']
+
+    for guest_idx, global_seat_idx in global_assignments.items():
+        table_idx = int(np.searchsorted(table_cumulative_capacity, global_seat_idx, side='right'))
+        table_start_seat = 0 if table_idx == 0 else table_cumulative_capacity[table_idx - 1]
+        local_seat_idx = int(global_seat_idx - table_start_seat)
+
+        target_table_id = table_list[table_idx].id
+        guest = guest_list[guest_idx]
+        table_assignments[target_table_id][local_seat_idx] = guest
+
+    return SeatingResponse(table_assignments=table_assignments, 
+                           avg_score=result['avg_score'],
+                           must_sit_together=result['must_sit_together'],
+                           could_sit_together=result['could_sit_together'],
+                           must_sit_apart=result['must_sit_apart'])

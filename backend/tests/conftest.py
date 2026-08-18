@@ -4,7 +4,6 @@ from itertools import combinations
 from faker import Faker
 from typing import  List
 from app.schema import Guest, Constraint, BanquetTable, CabaretTable, TheatreSection
-from app.models import GradSolver
 
 TAGS = ["work_a", "work_b", "uni_a", "uni_b", "family_a", "family_b", "church_a", "church_b", "gym", "school"]
 

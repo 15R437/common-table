@@ -1,6 +1,7 @@
 import numpy as np
 import math
 from scipy.linalg import block_diag
+from scipy.optimize import linear_sum_assignment
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -98,18 +99,33 @@ def regularised_surjective_init(n_low, n_high, noise_std=0.1):
    
 
 class GradSolver(Solver, nn.Module):
-    def __init__(self, guest_list: List[Guest], table_list: List[Table], constraints: List[Constraint] = [], init_type : Literal['surjective','uniform'] = 'surjective'):
+    def __init__(self, guest_list: List[Guest], table_list: List[Table], constraints: List[Constraint] = [], init_type : Literal['surjective','uniform'] = 'surjective', rel_weight=1, con_weight=10):
         super().__init__(guest_list, table_list, constraints)
+        self.rel_weight = rel_weight
+        self.con_weight = con_weight
+
         self.relation_matrix = torch.from_numpy(self._get_relation_matrix(guest_list)).float()
         self.constraint_matrix = torch.from_numpy(self._get_constraint_matrix(constraints)).float()
         self.table_adjacency = torch.from_numpy(self._get_table_adjacency(table_list)).float()
 
+        n = max(self.n_guests,self.n_seats)
+        if n > self.n_guests:
+            # dummy guests
+            n_extra = n - self.n_guests
+            self.constraint_matrix = F.pad(self.constraint_matrix,(0,n_extra,0,n_extra),mode='constant')
+            self.relation_matrix = F.pad(self.relation_matrix,(0,n_extra,0,n_extra),mode='constant')
+        elif n > self.n_seats:
+            # dummy seats
+            n_extra = n - self.n_seats
+            self.table_adjacency = F.pad(self.table_adjacency,(0,n_extra,0,n_extra),mode='constant')
+
+
         if init_type == 'surjective':
-            self.guest_logits = nn.Parameter(regularised_surjective_init(self.n_guests, self.n_seats))
-            self.seat_logits = nn.Parameter(regularised_surjective_init(self.n_seats, self.n_guests))
+            self.guest_logits = nn.Parameter(regularised_surjective_init(n, n))
+            self.seat_logits = nn.Parameter(regularised_surjective_init(n, n))
         elif init_type == 'uniform':
-            self.guest_logits = nn.Parameter(torch.zeros(self.n_guests, self.n_seats))
-            self.seat_logits = nn.Parameter(torch.zeros(self.n_seats, self.n_guests))
+            self.guest_logits = nn.Parameter(torch.zeros(n, n))
+            self.seat_logits = nn.Parameter(torch.zeros(n, n))
 
     def get_soft_assignment(self, temp=1):
         T_guest = F.softmax(self.guest_logits/temp, dim=1) # probability ditribution over seats per guest
@@ -118,9 +134,9 @@ class GradSolver(Solver, nn.Module):
         return T_guest, T_seats
         
 
-    def forward(self, rel_weight=1, con_weight=10):
+    def forward(self):
         T_guest, T_seats = self.get_soft_assignment()
-        guest_adjacency = rel_weight * self.relation_matrix + con_weight * self.constraint_matrix
+        guest_adjacency = self.rel_weight * self.relation_matrix + self.con_weight * self.constraint_matrix
 
         # for T_guest
         assignment = T_guest.t() # (n_seats, n_guests)
@@ -149,7 +165,7 @@ class GradSolver(Solver, nn.Module):
         
         return guest_score, seat_score, ce_loss
 
-    def train(self, lambda_guest, lambda_seat, lambda_ce, num_epochs=100, keep_history=True, verbose=True):
+    def train(self, num_epochs=1000, lambda_guest=1, lambda_seat=1, lambda_ce=50, keep_history=True, verbose=True):
         optimiser = torch.optim.Adam(self.parameters(),lr=0.01)
         history = {'guest_score':[], 'seat_score':[], 'cross_entropy':[], 'T_guest':[], 'T_seats':[]}
         num_edges = self.table_adjacency.sum()
@@ -170,6 +186,53 @@ class GradSolver(Solver, nn.Module):
                 log(f"(Epoch {epoch+1}/{num_epochs}) Guest Score: {guest_score/num_edges:.4f}, Seat Score: {seat_score/num_edges:.4f}, CE: {ce_loss:.4f}",verbose=verbose)
 
         return history
+
+    def extract_hard_seating(self):
+        """
+        Maps real guests to real seats, via the Hungarian algorithm on the soft assignment probs.
+        Also returns average score and constraint satisfaction rate.
+        """
+
+        #Convert to NumPy
+        relation_matrix = self.relation_matrix.cpu().detach().numpy()
+        constraint_matrix = self.constraint_matrix.cpu().detach().numpy()
+        table_adjacency = self.table_adjacency.cpu().detach().numpy()
+        T_guest = self.get_soft_assignment()[0].cpu().detach().numpy()
+
+        #Hungarian algorithm to match real guests to real seats
+        T_real = T_guest[:self.n_guests, :self.n_seats]
+        row_ind, col_ind = linear_sum_assignment(-T_real)
+        assignment = dict(zip(row_ind, col_ind))
+
+        guest_to_seat = np.zeros(self.n_guests, dtype=int)
+        guest_to_seat[row_ind] = col_ind
+        T_hard = np.zeros((self.n_guests,self.n_seats))
+        T_hard[row_ind,col_ind] = 1
+
+        #Compute average score of assignment
+        guest_adjacency = self.rel_weight * relation_matrix + self.con_weight * constraint_matrix
+        score_matrix = T_hard.T @ guest_adjacency @ T_hard
+        table_adj_sum = np.sum(table_adjacency)
+        avg_score = 2*np.sum(score_matrix * table_adjacency) / table_adj_sum if table_adj_sum > 0 else 0
+ 
+        result = {'assignment':assignment, 'avg_score':avg_score}
+        
+        
+        constraint_name = ['must_sit_together','could_sit_together','must_sit_apart']
+        constraint_weight = [1,0.5,-1]
+        constraint_matrix_upper = np.triu(constraint_matrix)
+        for name, weight in zip(constraint_name,constraint_weight):
+            guest_a, guest_b = np.where(constraint_matrix_upper == weight)
+            seat_a = guest_to_seat[guest_a]
+            seat_b = guest_to_seat[guest_b]
+
+            satisfied = np.sum(table_adjacency[seat_a,seat_b])
+            count = len(guest_a)
+            result[name] = (satisfied,count)
+
+
+        return result
+
 
 
 

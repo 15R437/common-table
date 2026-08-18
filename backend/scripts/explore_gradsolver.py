@@ -25,7 +25,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 
 from app.schema import Guest, Constraint, BanquetTable, CabaretTable, TheatreSection
-from app.models import GradSolver
+from app.solvers import GradSolver
 from utils.plots import plot_loss_history, plot_matrix, animate_matrices, plot_seating_chart
 
 OUTPUT_DIR = Path(__file__).parent / "outputs"
@@ -38,7 +38,7 @@ guest_list = [Guest(id=0,name="Alex",relation_tags=["alty_boys"]),
                 Guest(id=5,name="Jane",relation_tags=[])]
 random.shuffle(guest_list)
 constraints = [Constraint(guest_a_id=2,guest_b_id=3,relationship="must_sit_together")]
-table_list = [CabaretTable(id=0, num_seats=6,full_circle=False)]
+table_list = [CabaretTable(id=0, num_seats=8,full_circle=False)]
 
 
 def extract_hard_seating(T_guest):
@@ -72,8 +72,9 @@ def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce):
     T_guest_final, T_seats_final = model.get_soft_assignment()
     T_guest_final = T_guest_final.cpu().detach().numpy()
     T_seats_final = T_seats_final.cpu().detach().numpy()
+    final_arrangement = model.extract_hard_seating()
     plot_matrix(matrix_list=[T_guest_final, T_seats_final.T], title_list=['Learned T_guest', 'Learned T_seats transpose'], fig_title='Learned Assignment Matrices')
-    plot_seating_chart(tables=table_list,guest_list=guest_list,seat_of_guest=extract_hard_seating(T_guest_final))
+    plot_seating_chart(tables=table_list,guest_list=guest_list,seat_of_guest=final_arrangement)
     
 
 if __name__ == "__main__":

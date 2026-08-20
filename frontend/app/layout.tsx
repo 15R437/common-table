@@ -53,22 +53,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </a>
           </p>
           <p className="mt-1">
-            Free to use.
-            {/*
-              Once you've created a page at buymeacoffee.com, uncomment this and
-              replace the href with your real link:
-
-              {" "}
-              <a
-                href="https://buymeacoffee.com/your-handle"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-slate-500 hover:text-brand-dark transition-colors"
-              >
-                Buy me a coffee
-              </a>{" "}
-              if it saved you some stress.
-            */}
+            Free to use.{" "}
+            <a
+              href="https://ko-fi.com/israelshitta"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-slate-500 hover:text-brand-dark transition-colors"
+            >
+              Buy me a meal deal
+            </a>{" "}
+            if it saved you some stress.
           </p>
         </footer>
       </body>

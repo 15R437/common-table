@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --page-bg: #ffffff;
+  --nav-bg: #faf9fc;
+  --brand-dark: #483d8b;
+  --brand-dark-rgb: 72, 61, 139;
+  --brand-light: #f5f3ff;
+}
+
+@theme inline {
+  --color-page: var(--page-bg);
+  --color-nav: var(--nav-bg);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-light: var(--brand-light);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-oswald);
+  --shadow-brand-glow: 0 10px 15px -3px rgba(var(--brand-dark-rgb), 0.15),
+    0 4px 6px -2px rgba(var(--brand-dark-rgb), 0.08);
+}
+
+body {
+  background: var(--page-bg);
+  color: #1e1b2e;
+}

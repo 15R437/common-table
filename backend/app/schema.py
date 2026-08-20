@@ -24,26 +24,23 @@ class BanquetTable(Table):
     head_seat: Optional[bool] = Field(False, description="If True, a seat is placed at the head of the table")
     foot_seat: Optional[bool] = Field(False, description="If True a seat is placed at the foot of the table")
 
-    @model_validator(mode='after')
-    def check_parity(cls,model):
-        if model.head_seat and model.foot_seat and (model.num_seats % 2):
-            raise ValueError(f"If both head and foot seats are selected, then the total number of seats must be even")
-        return model
-    
-    def adjacency(self,adj_score=1,opp_score=1,diag_opp_score=1):
+    def adjacency(self,adj_score=1,opp_score=0.75,diag_opp_score=0.5):
         """
         Computes the adjacency matrix for the Banquet Table seating arrangement. Element (i,j) is 1 iff
         seat i and j are adjacent, directly opposite or diagonally opposite each other. Otherwise element (i,j) is 0.
         """
         num_side_seats = self.num_seats - int(self.head_seat) - int(self.foot_seat)
         adjacency_matrix = np.zeros((self.num_seats,self.num_seats))
-        offset = 0
+        offset = int(self.head_seat)
 
-        #head seats to first two side seats
+        # head seat to the first row of side seats -- normally two (one on
+        # each side), but there may only be one, or none, on a small table.
         if self.head_seat:
-            adjacency_matrix[0,1] = 1
-            adjacency_matrix[0,2] = 1
-            offset += 1  
+            for idx in range(offset, offset + min(2, num_side_seats)):
+                adjacency_matrix[0,idx] = 1
+            if num_side_seats == 0 and self.foot_seat:
+                # head and foot are the table's only two seats
+                adjacency_matrix[0,offset] = 1
 
         #side seats to adjacent and opposite side seats
         for i in range(num_side_seats-2):
@@ -51,23 +48,39 @@ class BanquetTable(Table):
             if i%2 == 0:
                 adjacency_matrix[idx,idx+1] = opp_score #directly opposite
                 adjacency_matrix[idx,idx+2] = adj_score #adjacent
-                adjacency_matrix[idx,idx+3] = diag_opp_score #diagonal opposite
+                # the "diagonal opposite" seat is the far seat of the *next*
+                # row -- only wire it up if that next row is complete. With
+                # an odd number of side seats, the final row has no left-hand
+                # seat, so this would otherwise index past the end of the
+                # matrix (see the dangling-seat handling below instead).
+                if i+3 < num_side_seats:
+                    adjacency_matrix[idx,idx+3] = diag_opp_score #diagonal opposite
             else:
                 adjacency_matrix[idx,idx+1] = diag_opp_score #diagonal opposite
                 adjacency_matrix[idx,idx+2] = adj_score #adjacent
-            
 
-        #penulitmate side seat to last side seat
-        idx = num_side_seats-2+offset
-        adjacency_matrix[idx,idx+1] = (1+num_side_seats)%2 #1 only if even number of side seats
 
-        #foot seat to last two side seats
+        #penultimate side seat to last side seat
+        if num_side_seats >= 2:
+            idx = num_side_seats-2+offset
+            if num_side_seats % 2 == 0:
+                adjacency_matrix[idx,idx+1] = 1 #last row's own pair are directly opposite
+            else:
+                # odd number of side seats: the last seat has no partner in its
+                # own row, so it has no "directly opposite" connection at all --
+                # instead it's diagonally opposite the previous row's other-side
+                # seat, mirroring the diagonal relationship every other row-pair
+                # gets from the loop above.
+                adjacency_matrix[idx,idx+1] = diag_opp_score
+
+        # foot seat to the last row of side seats -- normally two, but may be
+        # one or none on a small table (the head/foot-only case is handled above).
         if self.foot_seat:
-            idx = num_side_seats+offset
-            adjacency_matrix[idx,idx-1] = 1
-            adjacency_matrix[idx,idx-2] = 1
-        
-        return adjacency_matrix + adjacency_matrix.T 
+            foot_idx = num_side_seats+offset
+            for idx in range(foot_idx - min(2, num_side_seats), foot_idx):
+                adjacency_matrix[foot_idx,idx] = 1
+
+        return adjacency_matrix + adjacency_matrix.T
    
 class CabaretTable(Table):
     type: Literal["cabaret"] = "cabaret"
@@ -135,9 +148,19 @@ class SeatingRequest(BaseModel):
     tables: List[TableType]
     constraints: List[Constraint]
 
+class ConstraintViolation(BaseModel):
+    guest_a: Guest
+    guest_b: Guest
+
 class SeatingResponse(BaseModel):
     table_assignments: dict[str | int, dict[int,Guest]]
     avg_score: float = Field(..., description="The score for this seating arrangement.")
-    must_sit_together: tuple[int,int]
-    could_sit_together: tuple[int,int]
-    must_sit_apart: tuple[int,int]
+    must_sit_together: dict[str, int]
+    could_sit_together: dict[str,int]
+    must_sit_apart: dict[str, int]
+    must_sit_together_violations: List[ConstraintViolation] = Field(
+        default_factory=list, description="Guest pairs that should sit together but don't."
+    )
+    must_sit_apart_violations: List[ConstraintViolation] = Field(
+        default_factory=list, description="Guest pairs that should sit apart but don't."
+    )

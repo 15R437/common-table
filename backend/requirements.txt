@@ -1,3 +1,8 @@
+# CPU-only PyTorch build -- the default PyPI wheel bundles GPU/CUDA support
+# (~340MB heavier) that's dead weight on a CPU-only host like Railway, and
+# was very likely what pushed the container over its memory limit.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.1

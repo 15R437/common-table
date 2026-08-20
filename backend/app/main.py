@@ -10,17 +10,20 @@ from app import optimiser
 
 app = FastAPI()
 
+# Comma-separated list of allowed frontend origins, e.g.
+# "http://localhost:3000,https://your-app.vercel.app"
+allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.post("/api/v1/optimize", response_model=SeatingResponse)
-def optimize_layout(payload: SeatingRequest):
-    # FastAPI automatically validates that 'payload' matches the SeatingRequest schema
+@app.post("/api/v1/optimise", response_model=SeatingResponse)
+def optimise_layout(request: SeatingRequest):
     try:
-        return optimiser.solve(payload)
+        return optimiser.solve(request)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

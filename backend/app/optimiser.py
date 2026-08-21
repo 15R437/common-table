@@ -8,12 +8,21 @@ LAMBDA_SEAT = 1
 LAMBDA_CE = 50
 LAMBDA_ONE_HOT = 100
 
+MAX_GUESTS = 120
+MAX_SEATS = 120
+
 def solve(request: SeatingRequest) -> SeatingResponse:
     guest_list = request.guests
     table_list = request.tables
     constraints = request.constraints
 
+    if len(guest_list) > MAX_GUESTS:
+        raise ValueError(f"Guest list cannot exceed {MAX_GUESTS} guests.")
+
     total_seats = sum(table.num_seats for table in table_list)
+    if total_seats > MAX_SEATS:
+        raise ValueError(f"Total seats cannot exceed {MAX_SEATS}.")
+
     if len(guest_list) > total_seats:
         raise ValueError(
             f"{len(guest_list)} guests but only {total_seats} seats available across all tables."

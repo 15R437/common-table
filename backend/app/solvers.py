@@ -20,12 +20,22 @@ class Solver(ABC):
         self.id_dict = {guest.id: idx for idx, guest in enumerate(guest_list)}
         self.n_guests = len(guest_list)
         self.n_seats = sum((table.num_seats for table in table_list))
+        self._relation_matrix = self._get_relation_matrix(guest_list)
+        self._constraint_matrix = self._get_constraint_matrix(constraints)
+        self._table_adjacency = self._get_table_adjacency(table_list)
 
     def _get_relation_matrix(self, guest_list : List[Guest]) -> np.ndarray:
-        cliques = defaultdict(set)
+        # Tags are matched case-insensitively (e.g. "College" and "college"
+        # typed for different guests still count as the same group) --
+        # normalized locally, without mutating the guests' actual stored tags.
+        normalized_tags = [
+            {tag.strip().lower() for tag in guest.relation_tags}
+            for guest in guest_list
+        ]
 
-        for guest in guest_list:
-            for tag in guest.relation_tags:
+        cliques = defaultdict(set)
+        for guest, tags in zip(guest_list, normalized_tags):
+            for tag in tags:
                 cliques[tag].add(guest.id)
 
         n_guests = len(guest_list)
@@ -33,14 +43,14 @@ class Solver(ABC):
 
         for i in range(n_guests):
             for j in range(i + 1, n_guests):
-                guest_i = guest_list[i]
-                guest_j = guest_list[j]
-                common_cliques = set(guest_i.relation_tags).intersection(set(guest_j.relation_tags))
+                common_cliques = normalized_tags[i].intersection(normalized_tags[j])
                 similarity_score = 0
                 for clq in common_cliques:
-                    similarity_score += 1/len(cliques[clq])
-                        
-            
+                    clique_size = len(cliques[clq])
+                    if clique_size > 1:
+                        similarity_score += 1/(clique_size - 1)
+
+
                 relation_matrix[i][j] = similarity_score
                 relation_matrix[j][i] = similarity_score
 
@@ -70,7 +80,42 @@ class Solver(ABC):
             matrices.append(table.adjacency())
 
         return block_diag(*matrices)
-        
+
+    def _summarize_assignment(self, guest_to_seat: np.ndarray) -> dict:
+        """
+        Turns a guest->seat array into the standard result dict (assignment, avg_score, constraint satisfaction).
+        """
+        T_hard = np.zeros((self.n_guests, self.n_seats))
+        T_hard[np.arange(self.n_guests), guest_to_seat] = 1
+
+        score_matrix = T_hard.T @ self._relation_matrix @ T_hard
+        avg_score = np.sum(score_matrix * self._table_adjacency) / self.n_guests if self.n_guests > 0 else 0
+
+        result = {'assignment': {g: int(s) for g, s in enumerate(guest_to_seat) if g < self.n_guests and s < self.n_seats},'avg_score': avg_score}
+
+        constraint_name = ['must_sit_together', 'could_sit_together', 'must_sit_apart']
+        constraint_weight = [1, 0.5, -1]
+        constraint_matrix_upper = np.triu(self._constraint_matrix)
+        for name, weight in zip(constraint_name, constraint_weight):
+            guest_a, guest_b = np.where(constraint_matrix_upper == weight)
+            seat_a = guest_to_seat[guest_a]
+            seat_b = guest_to_seat[guest_b]
+            connected = self._table_adjacency[seat_a, seat_b] > 0
+
+            # "connected" is good for must_sit_together/could_sit_together,
+            # but it's exactly what must_sit_apart says *shouldn't* happen --
+            # satisfied there means the opposite condition.
+            satisfied_mask = connected if name != 'must_sit_apart' else ~connected
+            result[name] = {"satisfied": int(np.sum(satisfied_mask)), "total": len(guest_a)}
+
+            if name != 'could_sit_together':
+                violated_mask = ~satisfied_mask
+                result[f'{name}_violations'] = list(zip(
+                    guest_a[violated_mask].tolist(), guest_b[violated_mask].tolist()
+                ))
+
+        return result
+
 def regularised_surjective_init(n_low, n_high, noise_std=0.1):   
     # 1. Start with a baseline of low-variance random noise
     logits = torch.randn(n_low, n_high) * noise_std
@@ -104,11 +149,12 @@ class GradSolver(Solver, nn.Module):
         self.rel_weight = rel_weight
         self.con_weight = con_weight
 
-        self.relation_matrix = torch.from_numpy(self._get_relation_matrix(guest_list)).float()
-        self.constraint_matrix = torch.from_numpy(self._get_constraint_matrix(constraints)).float()
-        self.table_adjacency = torch.from_numpy(self._get_table_adjacency(table_list)).float()
+        self.constraint_matrix = torch.from_numpy(self._constraint_matrix).float()
+        self.relation_matrix = torch.from_numpy(self._relation_matrix).float()
+        self.table_adjacency = torch.from_numpy(self._table_adjacency).float()
 
         n = max(self.n_guests,self.n_seats)
+        self.n = n
         if n > self.n_guests:
             # dummy guests
             n_extra = n - self.n_guests
@@ -152,27 +198,23 @@ class GradSolver(Solver, nn.Module):
         
         seat_score = torch.sum(edge_scores)
 
-        # consistency loss: T_guest[i, j] and T_seats[j, i] both estimate
-        # "probability guest i sits at seat j", so they should agree. Cross-entropy
-        # of one against the other (held fixed as a target) pulls them together,
-        # since -sum_j p_j log q_j is minimized over the simplex exactly when q is
-        # proportional to p -- this holds even though T_seats.t()'s rows (and
-        # T_guest.t()'s rows) don't themselves sum to 1, unlike the softmax rows
-        # they're being compared against.
         eps = 1e-8
         ce_loss = -(T_seats.t().detach() * torch.log(T_guest + eps)).sum(dim=1).mean()
         ce_loss += -(T_guest.t().detach() * torch.log(T_seats + eps)).sum(dim=1).mean()
-        
-        return guest_score, seat_score, ce_loss
 
-    def train(self, num_epochs=1000, lambda_guest=1, lambda_seat=1, lambda_ce=50, keep_history=True, verbose=True):
+        one_hot_loss = (1 - (T_guest**2).sum(dim=1)).mean() + (1 - (T_seats**2).sum(dim=1)).mean()
+        
+        return guest_score, seat_score, ce_loss, one_hot_loss
+
+    def train(self, num_epochs=1000, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=50, keep_history=True, verbose=True):
         optimiser = torch.optim.Adam(self.parameters(),lr=0.01)
-        history = {'guest_score':[], 'seat_score':[], 'cross_entropy':[], 'T_guest':[], 'T_seats':[]}
+        history = {'guest_score':[], 'seat_score':[], 'cross_entropy':[], 'one_hot':[], 'T_guest':[], 'T_seats':[]}
         num_edges = self.table_adjacency.sum()
         for epoch in range(num_epochs):
             optimiser.zero_grad()
-            guest_score, seat_score, ce_loss = self.forward()
-            loss = -(lambda_guest * guest_score + lambda_seat * seat_score)/(num_edges + 1e-8) + lambda_ce * ce_loss
+            guest_score, seat_score, ce_loss, one_hot_loss = self.forward()
+            l_one_hot = 0 if epoch < int(0.8 * num_epochs) else lambda_one_hot
+            loss = -(lambda_guest * guest_score + lambda_seat * seat_score)/(num_edges + 1e-8) + lambda_ce * ce_loss  + l_one_hot * one_hot_loss
             loss.backward()
             optimiser.step()
 
@@ -180,10 +222,11 @@ class GradSolver(Solver, nn.Module):
                 history['guest_score'].append(guest_score.item())
                 history['seat_score'].append(seat_score.item())
                 history['cross_entropy'].append(ce_loss.item())
+                history['one_hot'].append(one_hot_loss.item())
                 history['T_guest'].append(self.get_soft_assignment()[0].cpu().detach().numpy())
                 history['T_seats'].append(self.get_soft_assignment()[1].cpu().detach().numpy())
             if epoch%100 == 0 or epoch == num_epochs -1:
-                log(f"(Epoch {epoch+1}/{num_epochs}) Guest Score: {guest_score/num_edges:.4f}, Seat Score: {seat_score/num_edges:.4f}, CE: {ce_loss:.4f}",verbose=verbose)
+                log(f"(Epoch {epoch+1}/{num_epochs}) Guest Score: {guest_score/num_edges:.4f}, Seat Score: {seat_score/num_edges:.4f}, CE: {ce_loss:.4f}, One Hot: {one_hot_loss:.4f}",verbose=verbose)
 
         return history
 
@@ -192,48 +235,205 @@ class GradSolver(Solver, nn.Module):
         Maps real guests to real seats, via the Hungarian algorithm on the soft assignment probs.
         Also returns average score and constraint satisfaction rate.
         """
-
-        #Convert to NumPy
-        relation_matrix = self.relation_matrix.cpu().detach().numpy()
-        constraint_matrix = self.constraint_matrix.cpu().detach().numpy()
-        table_adjacency = self.table_adjacency.cpu().detach().numpy()
         T_guest = self.get_soft_assignment()[0].cpu().detach().numpy()
 
         #Hungarian algorithm to match real guests to real seats
         T_real = T_guest[:self.n_guests, :self.n_seats]
         row_ind, col_ind = linear_sum_assignment(-T_real)
-        assignment = dict(zip(row_ind, col_ind))
-
-        guest_to_seat = np.zeros(self.n_guests, dtype=int)
+        guest_to_seat = np.zeros(self.n, dtype=int)
         guest_to_seat[row_ind] = col_ind
-        T_hard = np.zeros((self.n_guests,self.n_seats))
-        T_hard[row_ind,col_ind] = 1
 
-        #Compute average score of assignment
-        guest_adjacency = self.rel_weight * relation_matrix + self.con_weight * constraint_matrix
-        score_matrix = T_hard.T @ guest_adjacency @ T_hard
-        table_adj_sum = np.sum(table_adjacency)
-        avg_score = 2*np.sum(score_matrix * table_adjacency) / table_adj_sum if table_adj_sum > 0 else 0
- 
-        result = {'assignment':assignment, 'avg_score':avg_score}
-        
-        
-        constraint_name = ['must_sit_together','could_sit_together','must_sit_apart']
-        constraint_weight = [1,0.5,-1]
-        constraint_matrix_upper = np.triu(constraint_matrix)
-        for name, weight in zip(constraint_name,constraint_weight):
-            guest_a, guest_b = np.where(constraint_matrix_upper == weight)
-            seat_a = guest_to_seat[guest_a]
-            seat_b = guest_to_seat[guest_b]
+        dummy_guests = np.setdiff1d(np.arange(self.n), row_ind)
+        empty_seats = np.setdiff1d(np.arange(self.n), col_ind)
+        guest_to_seat[dummy_guests] = empty_seats
 
-            satisfied = np.sum(table_adjacency[seat_a,seat_b])
-            count = len(guest_a)
-            result[name] = (satisfied,count)
+        return guest_to_seat
+
+    def decimate(self, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=1,
+                 initial_epochs=300, settle_epochs=30, batch_size=1, verbose=False):
+        """
+        Iteratively pin the most-confident remaining guest(s) to their
+        highest-probability seat, mask those seats out for everyone else, and
+        continue training the rest ("settle") before pinning the next batch.
+
+        Produces a valid discrete assignment by construction -- a seat is
+        masked out for every other guest the moment it's taken, so there's no
+        Hungarian-extraction step needed afterwards, and no way for the mean-
+        field marginals to be mis-decoded into a double-booked seat.
+
+        batch_size=1 (pin one guest per round, re-settling after each) gives
+        the most adaptive results, but costs O(n) settle-rounds -- for large
+        guest lists, pinning several of the most-confident guests per round
+        trades a little quality for a roughly batch_size-times speedup.
+        """
+        n = self.guest_logits.shape[0]
+        optimiser = torch.optim.Adam(self.parameters(), lr=0.01)
+        guest_adjacency = self.rel_weight * self.relation_matrix + self.con_weight * self.constraint_matrix
+        num_edges = self.table_adjacency.sum()
+        pinned: dict[int, int] = {}
+        NEG = -1e4
+
+        def masked_soft_assignment():
+            g_logits = self.guest_logits.clone()
+            s_logits = self.seat_logits.clone()
+            if pinned:
+                seats = list(pinned.values())
+                gs = list(pinned.keys())
+                g_logits[:, seats] = NEG
+                s_logits[:, gs] = NEG
+                for g, s in pinned.items():
+                    g_logits[g, :] = NEG
+                    g_logits[g, s] = 0.0
+                    s_logits[s, :] = NEG
+                    s_logits[s, g] = 0.0
+            return F.softmax(g_logits, dim=1), F.softmax(s_logits, dim=1)
+
+        def settle(num_epochs):
+            for _ in range(num_epochs):
+                optimiser.zero_grad()
+                T_guest, T_seats = masked_soft_assignment()
+                assignment = T_guest.t()
+                guest_score = torch.sum((assignment @ guest_adjacency @ assignment.t()) * self.table_adjacency)
+                assignment = T_seats
+                seat_score = torch.sum((assignment @ guest_adjacency @ assignment.t()) * self.table_adjacency)
+                eps = 1e-8
+                ce = -(T_seats.t().detach() * torch.log(T_guest + eps)).sum(dim=1).mean()
+                ce += -(T_guest.t().detach() * torch.log(T_seats + eps)).sum(dim=1).mean()
+                one_hot = (1 - (T_guest ** 2).sum(dim=1)).mean()
+                loss = (-(lambda_guest * guest_score + lambda_seat * seat_score) / (num_edges + 1e-8)
+                        + lambda_ce * ce + lambda_one_hot * one_hot)
+                loss.backward()
+                optimiser.step()
+
+        settle(initial_epochs)
+        while len(pinned) < n:
+            T_guest, _ = masked_soft_assignment()
+            free = [g for g in range(n) if g not in pinned]
+            free.sort(key=lambda g: T_guest[g].max().item(), reverse=True)
+
+            # pin the top batch_size most-confident free guests, greedily
+            # resolving any within-batch seat collisions by confidence order
+            # (all candidates were ranked against the same pre-batch snapshot,
+            # so two could nominally want the same seat)
+            claimed_this_batch = set()
+            for g in free[:batch_size]:
+                seat_prefs = torch.argsort(T_guest[g], descending=True)
+                s_star = next(int(s) for s in seat_prefs if int(s) not in claimed_this_batch)
+                pinned[g] = s_star
+                claimed_this_batch.add(s_star)
+
+            settle(settle_epochs)
+            log(f"decimation: pinned {len(pinned)}/{n}", verbose=verbose)
+
+        relation_matrix = self.relation_matrix.cpu().detach().numpy()[:self.n_guests, :self.n_guests]
+        constraint_matrix = self.constraint_matrix.cpu().detach().numpy()[:self.n_guests, :self.n_guests]
+        table_adjacency = self.table_adjacency.cpu().detach().numpy()[:self.n_seats, :self.n_seats]
+        guest_to_seat = np.array([pinned[g] for g in range(self.n_guests)])
+
+        return self._summarize_assignment(guest_to_seat, relation_matrix, constraint_matrix, table_adjacency)
 
 
-        return result
+class LocalSearchSolver(Solver):
+    """
+    Pure discrete local search: hill-climb a guest<->seat assignment via
+    pairwise swaps, evaluating each candidate swap by its score *delta*
+    rather than rescoring the whole arrangement from scratch. A swap between
+    seats p and q only changes score terms touching p or q, so the delta only
+    needs to sum over p and q's actual table-adjacency neighbors -- which,
+    for any real table layout, is a small bounded number regardless of how
+    many guests/seats there are in total. That's what makes this scale: each
+    candidate-swap check costs O(seat degree), not O(n) or O(n^3).
 
+    Usable standalone (random restart + hill-climb, a legitimate simple
+    baseline) via solve(), or as a refinement pass on top of another solver's
+    output via refine().
+    """
 
+    def __init__(self, guest_list: List[Guest], table_list: List[Table], constraints: List[Constraint] = [], rel_weight=1, con_weight=10):
+        super().__init__(guest_list, table_list, constraints)
+        self.rel_weight = rel_weight
+        self.con_weight = con_weight
+
+        relation_matrix = self._get_relation_matrix(guest_list)
+        constraint_matrix = self._get_constraint_matrix(constraints)
+        table_adjacency = self._get_table_adjacency(table_list)
+        guest_adjacency = rel_weight * relation_matrix + con_weight * constraint_matrix
+
+        n = max(self.n_guests, self.n_seats)
+        if n > self.n_guests:
+            padded = np.zeros((n, n))
+            padded[:self.n_guests, :self.n_guests] = guest_adjacency # real guests to real guests
+            padded[self.n_guests:, :self.n_guests] = -1e-6 # fake guests to real guests
+            padded[:self.n_guests, self.n_guests:] = -1e-6 # real guests to fake guests
+            guest_adjacency = padded
+        if n > self.n_seats:
+            padded = np.zeros((n, n))
+            padded[:self.n_seats, :self.n_seats] = table_adjacency
+            table_adjacency = padded
+
+        self.n = n
+        self.guest_adjacency = guest_adjacency
+        self.table_adjacency = table_adjacency
+        self.neighbors = [np.nonzero(table_adjacency[i])[0] for i in range(n)]
+
+    def score(self, seat_to_guest: np.ndarray) -> float:
+        P = np.zeros((self.n, self.n))
+        P[np.arange(self.n), seat_to_guest] = 1
+        return np.sum((P @ self.guest_adjacency @ P.T) * self.table_adjacency)
+
+    def _swap_delta(self, seat_to_guest: np.ndarray, s1: int, s2: int) -> float:
+        g1, g2 = seat_to_guest[s1], seat_to_guest[s2]
+        G, A = self.guest_adjacency, self.table_adjacency
+        total = 0.0
+        for k in self.neighbors[s1]:
+            if k == s2:
+                continue
+            gk = seat_to_guest[k]
+            total += A[s1, k] * (G[g2, gk] - G[g1, gk])
+        for k in self.neighbors[s2]:
+            if k == s1:
+                continue
+            gk = seat_to_guest[k]
+            total += A[s2, k] * (G[g1, gk] - G[g2, gk])
+        return total
+
+    def refine(self, seat_to_guest: np.ndarray) -> np.ndarray:
+        """Hill-climb from a given seat->guest assignment to a swap-local optimum."""
+        seat_to_guest = np.array(seat_to_guest, dtype=int).copy()
+        improved = True
+        while improved:
+            improved = False
+            for s1 in range(self.n):
+                for s2 in range(s1 + 1, self.n):
+                    if self._swap_delta(seat_to_guest, s1, s2) > 1e-9:
+                        seat_to_guest[s1], seat_to_guest[s2] = seat_to_guest[s2], seat_to_guest[s1]
+                        improved = True
+        return seat_to_guest
+
+    def random_assignment(self, seed=None) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        return rng.permutation(self.n)
+
+    def solve(self, initial: np.ndarray = None, seed=None, num_restarts: int = 1):
+        """
+        Refine `initial` if given (single pass). Otherwise run `num_restarts`
+        random restarts and keep the best. Returns (guest_of_seat, score).
+        """
+        if initial is not None:
+            seat_to_guest = self.refine(initial)
+            guest_to_seat = np.argsort(seat_to_guest)
+            return guest_to_seat
+
+        best_assignment, best_score = None, -np.inf
+        for i in range(num_restarts):
+            start = self.random_assignment(seed=None if seed is None else seed + i)
+            candidate = self.refine(start)
+            candidate_score = self.score(candidate)
+            if candidate_score > best_score:
+                best_assignment, best_score = candidate, candidate_score
+
+        guest_to_seat = np.argsort(best_assignment)
+        return guest_to_seat
 
 
 if __name__ == "__main__":

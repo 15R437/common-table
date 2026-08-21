@@ -45,12 +45,12 @@ def test_relation_matrix_zero_for_guests_with_no_shared_tags():
 
 
 def test_relation_matrix_weights_shared_tag_by_inverse_clique_size():
-    """A tag shared by k guests should contribute 1/k to each pair sharing it."""
+    """A tag shared by k guests should contribute 1/(k-1) to each pair sharing it."""
     guests = [Guest(id=i, name=str(i), relation_tags=["friends"]) for i in range(3)]
     tables = [BanquetTable(id="t1", type="banquet", num_seats=4)]
     solver = GradSolver(guest_list=guests, table_list=tables, constraints=[])
 
-    expected = 1 / 3
+    expected = 1 / 2
     for i in range(3):
         for j in range(i + 1, 3):
             assert solver.relation_matrix[i, j].item() == pytest.approx(expected)
@@ -65,8 +65,8 @@ def test_relation_matrix_sums_contributions_across_multiple_shared_tags():
     tables = [BanquetTable(id="t1", type="banquet", num_seats=2)]
     solver = GradSolver(guest_list=guests, table_list=tables, constraints=[])
 
-    # each tag's clique is just these two guests, so each tag contributes 1/2 -> 1/2 + 1/2 = 1
-    assert solver.relation_matrix[0, 1].item() == pytest.approx(1.0)
+    # each tag's clique is just these two guests (k=2), so each tag contributes 1/(2-1)=1 -> 1 + 1 = 2
+    assert solver.relation_matrix[0, 1].item() == pytest.approx(2.0)
 
 
 # --- Solver._get_constraint_matrix ------------------------------------------
@@ -256,17 +256,18 @@ def test_get_soft_assignment_lower_temperature_sharpens_distribution(sample_gues
 
 # --- GradSolver.forward -------------------------------------------------------
 
-def test_forward_returns_three_scalars(sample_guests_and_constraints, sample_banquet_tables):
-    """guest_score, seat_score, ce_loss should each be 0-dimensional tensors."""
+def test_forward_returns_four_scalars(sample_guests_and_constraints, sample_banquet_tables):
+    """guest_score, seat_score, ce_loss, one_hot_loss should each be 0-dimensional tensors."""
     data = sample_guests_and_constraints(num_guests=5, num_constraints=2, seed=5)
     tables = sample_banquet_tables(num_seats_per_table=[6])
     solver = GradSolver(guest_list=data["guest_list"], table_list=tables, constraints=data["constraints"])
 
-    guest_score, seat_score, ce_loss = solver.forward()
+    guest_score, seat_score, ce_loss, one_hot_loss = solver.forward()
 
     assert guest_score.dim() == 0
     assert seat_score.dim() == 0
     assert ce_loss.dim() == 0
+    assert one_hot_loss.dim() == 0
 
 
 def test_forward_ce_loss_is_nonnegative(sample_guests_and_constraints, sample_banquet_tables):
@@ -275,7 +276,7 @@ def test_forward_ce_loss_is_nonnegative(sample_guests_and_constraints, sample_ba
     tables = sample_banquet_tables(num_seats_per_table=[6])
     solver = GradSolver(guest_list=data["guest_list"], table_list=tables, constraints=data["constraints"])
 
-    _, _, ce_loss = solver.forward()
+    _, _, ce_loss, _ = solver.forward()
 
     assert ce_loss.item() >= 0
 
@@ -290,8 +291,8 @@ def test_forward_is_differentiable(sample_guests_and_constraints, sample_banquet
     tables = sample_banquet_tables(num_seats_per_table=[6])
     solver = GradSolver(guest_list=data["guest_list"], table_list=tables, constraints=data["constraints"])
 
-    guest_score, seat_score, ce_loss = solver.forward()
-    loss = guest_score + seat_score + ce_loss
+    guest_score, seat_score, ce_loss, one_hot_loss = solver.forward()
+    loss = guest_score + seat_score + ce_loss + one_hot_loss
     loss.backward()
 
     assert solver.guest_logits.grad is not None
@@ -302,14 +303,14 @@ def test_forward_is_differentiable(sample_guests_and_constraints, sample_banquet
 # --- GradSolver.train ----------------------------------------------------------
 
 def test_train_history_has_expected_keys(sample_guests_and_constraints, sample_banquet_tables):
-    """Returned history dict should contain 'guest_score', 'seat_score', 'ce', 'T_guest', 'T_seats'."""
+    """Returned history dict should contain 'guest_score', 'seat_score', 'cross_entropy', 'one_hot', 'T_guest', 'T_seats'."""
     data = sample_guests_and_constraints(num_guests=4, num_constraints=1, seed=8)
     tables = sample_banquet_tables(num_seats_per_table=[4])
     solver = GradSolver(guest_list=data["guest_list"], table_list=tables, constraints=data["constraints"])
 
     history = solver.train(lambda_guest=1, lambda_seat=1, lambda_ce=0.1, num_epochs=3, verbose=False)
 
-    assert set(history.keys()) == {"guest_score", "seat_score", "cross_entropy", "T_guest", "T_seats"}
+    assert set(history.keys()) == {"guest_score", "seat_score", "cross_entropy", "one_hot", "T_guest", "T_seats"}
 
 
 def test_train_history_length_matches_num_epochs(sample_guests_and_constraints, sample_banquet_tables):
@@ -375,8 +376,11 @@ def test_train_improves_score_on_a_simple_case():
     tables = [BanquetTable(id="t1", type="banquet", num_seats=6)]
     solver = GradSolver(guest_list=guests, table_list=tables, constraints=[])
 
-    guest_score_before, _, _ = solver.forward()
-    solver.train(lambda_guest=1, lambda_seat=1, lambda_ce=0.1, num_epochs=300, verbose=False)
-    guest_score_after, _, _ = solver.forward()
+    guest_score_before, _, _, _ = solver.forward()
+    # lambda_one_hot=0: this test isolates score-maximization specifically,
+    # not the one-hot regularizer, which at its default weight can pull
+    # against raw guest_score when lambda_ce is this low.
+    solver.train(lambda_guest=1, lambda_seat=1, lambda_ce=0.1, lambda_one_hot=0, num_epochs=300, verbose=False)
+    guest_score_after, _, _, _ = solver.forward()
 
     assert guest_score_after.item() > guest_score_before.item()

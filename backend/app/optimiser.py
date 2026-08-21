@@ -1,11 +1,12 @@
 import numpy as np
-from .schema import SeatingRequest, SeatingResponse
-from .solvers import GradSolver
+from .schema import SeatingRequest, SeatingResponse, ConstraintViolation
+from .solvers import GradSolver, LocalSearchSolver
 
-NUM_EPOCHS = 300
+NUM_EPOCHS = 1000
 LAMBDA_GUEST = 1
 LAMBDA_SEAT = 1
 LAMBDA_CE = 50
+LAMBDA_ONE_HOT = 100
 
 def solve(request: SeatingRequest) -> SeatingResponse:
     guest_list = request.guests
@@ -18,16 +19,14 @@ def solve(request: SeatingRequest) -> SeatingResponse:
             f"{len(guest_list)} guests but only {total_seats} seats available across all tables."
         )
 
+    NUM_EPOCHS = 100 * len(guest_list)
     model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='uniform')
-    model.train(
-        lambda_guest=LAMBDA_GUEST,
-        lambda_seat=LAMBDA_SEAT,
-        lambda_ce=LAMBDA_CE,
-        num_epochs=NUM_EPOCHS,
-        keep_history=False,
-        verbose=False,
-    )
-    result = model.extract_hard_seating()
+    model.train(lambda_guest=LAMBDA_GUEST, lambda_seat=LAMBDA_SEAT, lambda_ce=LAMBDA_CE, lambda_one_hot=LAMBDA_ONE_HOT, num_epochs=NUM_EPOCHS, keep_history=False, verbose=False)
+    guest_to_seat = model.extract_hard_seating()
+    local_search = LocalSearchSolver(guest_list=guest_list, table_list=table_list, constraints=constraints)
+    seat_to_guest = np.argsort(guest_to_seat)
+    guest_to_seat = local_search.solve(initial=seat_to_guest)
+    result = model._summarize_assignment(guest_to_seat=guest_to_seat)
 
     table_capacity = [table.num_seats for table in table_list]
     table_cumulative_capacity = np.cumsum(table_capacity)
@@ -44,8 +43,16 @@ def solve(request: SeatingRequest) -> SeatingResponse:
         guest = guest_list[guest_idx]
         table_assignments[target_table_id][local_seat_idx] = guest
 
-    return SeatingResponse(table_assignments=table_assignments, 
+    def to_violations(index_pairs):
+        return [
+            ConstraintViolation(guest_a=guest_list[a], guest_b=guest_list[b])
+            for a, b in index_pairs
+        ]
+
+    return SeatingResponse(table_assignments=table_assignments,
                            avg_score=result['avg_score'],
                            must_sit_together=result['must_sit_together'],
                            could_sit_together=result['could_sit_together'],
-                           must_sit_apart=result['must_sit_apart'])
+                           must_sit_apart=result['must_sit_apart'],
+                           must_sit_together_violations=to_violations(result['must_sit_together_violations']),
+                           must_sit_apart_violations=to_violations(result['must_sit_apart_violations']))

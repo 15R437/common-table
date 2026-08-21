@@ -32,13 +32,13 @@ OUTPUT_DIR = Path(__file__).parent / "outputs"
 
 guest_list = [Guest(id=0,name="Alex",relation_tags=["alty_boys"]),
                 Guest(id=1,name="Success",relation_tags=["alty_boys"]),
-                Guest(id=2,name="Danny",relation_tags=["alty_boys"]),
-                Guest(id=3,name="Ivy",relation_tags=["sainsburys"],),
-                Guest(id=4,name="Adam",relation_tags=["sainsburys"]),
-                Guest(id=5,name="Jane",relation_tags=[])]
-random.shuffle(guest_list)
+                Guest(id=2,name="Danny",relation_tags=["alty_boys","htb"]),
+                Guest(id=3,name="Ivy",relation_tags=[],),
+                Guest(id=4,name="Ezra",relation_tags=["htb"]),
+                Guest(id=5,name="Tolu",relation_tags=["htb"])]
+#random.shuffle(guest_list)
 constraints = [Constraint(guest_a_id=2,guest_b_id=3,relationship="must_sit_together")]
-table_list = [CabaretTable(id=0, num_seats=8,full_circle=False)]
+table_list = [CabaretTable(id=0, num_seats=6)]
 
 
 def extract_hard_seating(T_guest):
@@ -46,7 +46,7 @@ def extract_hard_seating(T_guest):
     row_ind, col_ind = linear_sum_assignment(-T_guest)
     return dict(zip(row_ind, col_ind))
 
-def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce):
+def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce, lambda_one_hot):
     #torch.manual_seed(seed)
     model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='uniform')
 
@@ -58,6 +58,7 @@ def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce):
         lambda_guest=lambda_guest,
         lambda_seat=lambda_seat,
         lambda_ce=lambda_ce,
+        lambda_one_hot=lambda_one_hot,
         num_epochs=num_epochs,
         keep_history=True,
         verbose=True,
@@ -65,17 +66,18 @@ def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce):
     elapsed = time.time() - start
     print(f"Experiment complete after {elapsed:.4f}s.")
 
-    plot_loss_history(history=history, primary_losses=['guest_score','seat_score'], secondary_losses=['cross_entropy'])
+    plot_loss_history(history=history, primary_losses=['guest_score','seat_score'], secondary_losses=['cross_entropy','one_hot'])
     animate_matrices(matrix_list=history['T_guest'],fig_title='T_guest')
     animate_matrices(matrix_list=history['T_seats'],fig_title='T_seats')
 
     T_guest_final, T_seats_final = model.get_soft_assignment()
     T_guest_final = T_guest_final.cpu().detach().numpy()
     T_seats_final = T_seats_final.cpu().detach().numpy()
-    final_arrangement = model.extract_hard_seating()
+    guest_to_seat = model.extract_hard_seating()
+    final_arrangement = model._summarize_assignment(guest_to_seat)
     plot_matrix(matrix_list=[T_guest_final, T_seats_final.T], title_list=['Learned T_guest', 'Learned T_seats transpose'], fig_title='Learned Assignment Matrices')
-    plot_seating_chart(tables=table_list,guest_list=guest_list,seat_of_guest=final_arrangement)
+    plot_seating_chart(tables=table_list,guest_list=guest_list,seat_of_guest=final_arrangement['assignment'])
     
 
 if __name__ == "__main__":
-    run_experiment(num_epochs=1000, lambda_guest=1, lambda_seat=1, lambda_ce=50)
+    run_experiment(num_epochs=1000, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=10)

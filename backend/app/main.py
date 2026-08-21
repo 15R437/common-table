@@ -21,6 +21,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def health_check():
+    return {"status": "ok"}
+
 @app.post("/api/v1/optimise", response_model=SeatingResponse)
 def optimise_layout(request: SeatingRequest):
     try:

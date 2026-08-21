@@ -3,6 +3,14 @@ import math
 from scipy.linalg import block_diag
 from scipy.optimize import linear_sum_assignment
 import torch
+
+# Small containers (e.g. Railway's default plan) often report more CPUs than
+# are actually allocated to them. Torch then spawns a thread per reported CPU
+# and those threads spend most of their time contending for a much smaller
+# real CPU quota, rather than doing useful work -- for a problem this small,
+# single-threaded is both simpler and dramatically faster in that environment.
+torch.set_num_threads(1)
+
 import torch.nn.functional as F
 import torch.nn as nn
 from typing import List, Literal

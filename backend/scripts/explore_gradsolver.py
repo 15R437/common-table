@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from scipy.optimize import linear_sum_assignment
 
@@ -29,6 +30,39 @@ from app.solvers import GradSolver
 from utils.plots import plot_loss_history, plot_matrix, animate_matrices, plot_seating_chart
 
 OUTPUT_DIR = Path(__file__).parent / "outputs"
+DATA_DIR = Path(__file__).parent / "data"
+
+# The workbook's relationship labels read as full sentences ("must sit
+# together with"); Constraint.relationship uses the shorter form.
+RELATIONSHIP_MAP = {
+    "must_sit_together_with": "must_sit_together",
+    "could_sit_together_with": "could_sit_together",
+    "must_sit_apart_from": "must_sit_apart",
+}
+
+
+def load_guest_data(path: Path = DATA_DIR / "wedding_guest_list.xlsx") -> tuple[list[Guest], list[Constraint]]:
+    """Parse a guest-list workbook (Guests + Constraints sheets) into a guest_list and constraints list."""
+    guests_df = pd.read_excel(path, sheet_name="Guests")
+    constraints_df = pd.read_excel(path, sheet_name="Constraints")
+
+    guest_list = []
+    name_to_id = {}
+    for guest_id, row in guests_df.iterrows():
+        tags = [tag.strip() for tag in str(row["tags"]).split(",")] if pd.notna(row["tags"]) else []
+        guest_list.append(Guest(id=guest_id, name=row["name"], relation_tags=tags))
+        name_to_id[row["name"]] = guest_id
+
+    constraints = [
+        Constraint(
+            guest_a_id=name_to_id[row["guest_a"]],
+            guest_b_id=name_to_id[row["guest_b"]],
+            relationship=RELATIONSHIP_MAP[row["relationship"]],
+        )
+        for _, row in constraints_df.iterrows()
+    ]
+
+    return guest_list, constraints
 
 guest_list = [Guest(id=0,name="Alex",relation_tags=["alty_boys"]),
                 Guest(id=1,name="Success",relation_tags=["alty_boys"]),
@@ -38,7 +72,8 @@ guest_list = [Guest(id=0,name="Alex",relation_tags=["alty_boys"]),
                 Guest(id=5,name="Tolu",relation_tags=["htb"])]
 #random.shuffle(guest_list)
 constraints = [Constraint(guest_a_id=2,guest_b_id=3,relationship="must_sit_together")]
-table_list = [CabaretTable(id=0, num_seats=6)]
+guest_list, constraints = load_guest_data()
+table_list = [BanquetTable(id=i, num_seats=36) for i in range(3)]
 
 
 def extract_hard_seating(T_guest):
@@ -48,7 +83,7 @@ def extract_hard_seating(T_guest):
 
 def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce, lambda_one_hot):
     #torch.manual_seed(seed)
-    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='uniform')
+    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='surjective')
 
     T_guest_before, _ = model.get_soft_assignment()
     T_guest_before = T_guest_before.detach().clone()
@@ -66,6 +101,7 @@ def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce, lambda_one_
     elapsed = time.time() - start
     print(f"Experiment complete after {elapsed:.4f}s.")
 
+   
     plot_loss_history(history=history, primary_losses=['guest_score','seat_score'], secondary_losses=['cross_entropy','one_hot'])
     animate_matrices(matrix_list=history['T_guest'],fig_title='T_guest')
     animate_matrices(matrix_list=history['T_seats'],fig_title='T_seats')
@@ -75,9 +111,11 @@ def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce, lambda_one_
     T_seats_final = T_seats_final.cpu().detach().numpy()
     guest_to_seat = model.extract_hard_seating()
     final_arrangement = model._summarize_assignment(guest_to_seat)
+
+    print(f"Final Relation Score: {final_arrangement['relation_score']} Final Constraint Score: {final_arrangement['constraint_score']}")
     plot_matrix(matrix_list=[T_guest_final, T_seats_final.T], title_list=['Learned T_guest', 'Learned T_seats transpose'], fig_title='Learned Assignment Matrices')
     plot_seating_chart(tables=table_list,guest_list=guest_list,seat_of_guest=final_arrangement['assignment'])
     
 
 if __name__ == "__main__":
-    run_experiment(num_epochs=1000, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=10)
+    run_experiment(num_epochs=5000, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=50)

@@ -39,7 +39,6 @@ class BanquetTable(Table):
             for idx in range(offset, offset + min(2, num_side_seats)):
                 adjacency_matrix[0,idx] = 1
             if num_side_seats == 0 and self.foot_seat:
-                # head and foot are the table's only two seats
                 adjacency_matrix[0,offset] = 1
 
         #side seats to adjacent and opposite side seats
@@ -154,7 +153,8 @@ class ConstraintViolation(BaseModel):
 
 class SeatingResponse(BaseModel):
     table_assignments: dict[str | int, dict[int,Guest]]
-    avg_score: float = Field(..., description="The score for this seating arrangement.")
+    relation_score: float = Field(..., description="The average relation score for this seating arrangement.")
+    constraint_score: float = Field(..., description="The total constraint score for this seating arrangement.")
     must_sit_together: dict[str, int]
     could_sit_together: dict[str,int]
     must_sit_apart: dict[str, int]

@@ -93,13 +93,17 @@ class Solver(ABC):
         """
         Turns a guest->seat array into the standard result dict (assignment, avg_score, constraint satisfaction).
         """
+        guest_to_seat = guest_to_seat[:self.n_guests]
         T_hard = np.zeros((self.n_guests, self.n_seats))
         T_hard[np.arange(self.n_guests), guest_to_seat] = 1
 
-        score_matrix = T_hard.T @ self._relation_matrix @ T_hard
-        avg_score = np.sum(score_matrix * self._table_adjacency) / self.n_guests if self.n_guests > 0 else 0
+        relation_score = T_hard.T @ self._relation_matrix @ T_hard
+        relation_score = np.sum(relation_score * self._table_adjacency) / self.n_guests if self.n_guests > 0 else 0
 
-        result = {'assignment': {g: int(s) for g, s in enumerate(guest_to_seat) if g < self.n_guests and s < self.n_seats},'avg_score': avg_score}
+        constraint_score = np.sum((T_hard.T @ self._constraint_matrix @ T_hard) * self._table_adjacency)
+
+        result = {'assignment': {g: int(s) for g, s in enumerate(guest_to_seat) if g < self.n_guests and s < self.n_seats},
+                  'relation_score': relation_score, 'constraint_score':constraint_score}
 
         constraint_name = ['must_sit_together', 'could_sit_together', 'must_sit_apart']
         constraint_weight = [1, 0.5, -1]
@@ -227,14 +231,14 @@ class GradSolver(Solver, nn.Module):
             optimiser.step()
 
             if keep_history:
-                history['guest_score'].append(guest_score.item())
-                history['seat_score'].append(seat_score.item())
+                history['guest_score'].append(guest_score.item()/self.n_guests)
+                history['seat_score'].append(seat_score.item()/self.n_guests)
                 history['cross_entropy'].append(ce_loss.item())
                 history['one_hot'].append(one_hot_loss.item())
                 history['T_guest'].append(self.get_soft_assignment()[0].cpu().detach().numpy())
                 history['T_seats'].append(self.get_soft_assignment()[1].cpu().detach().numpy())
             if epoch%100 == 0 or epoch == num_epochs -1:
-                log(f"(Epoch {epoch+1}/{num_epochs}) Guest Score: {guest_score/num_edges:.4f}, Seat Score: {seat_score/num_edges:.4f}, CE: {ce_loss:.4f}, One Hot: {one_hot_loss:.4f}",verbose=verbose)
+                log(f"(Epoch {epoch+1}/{num_epochs}) Guest Score: {guest_score/self.n_guests:.4f}, Seat Score: {seat_score/self.n_guests:.4f}, CE: {ce_loss:.4f}, One Hot: {one_hot_loss:.4f}",verbose=verbose)
 
         return history
 
@@ -257,8 +261,8 @@ class GradSolver(Solver, nn.Module):
 
         return guest_to_seat
 
-    def decimate(self, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=1,
-                 initial_epochs=300, settle_epochs=30, batch_size=1, verbose=False):
+    def decimate(self, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=0,
+                 initial_epochs=300, settle_epochs=30, batch_size=1, keep_history=True, verbose=True):
         """
         Iteratively pin the most-confident remaining guest(s) to their
         highest-probability seat, mask those seats out for everyone else, and
@@ -273,6 +277,13 @@ class GradSolver(Solver, nn.Module):
         the most adaptive results, but costs O(n) settle-rounds -- for large
         guest lists, pinning several of the most-confident guests per round
         trades a little quality for a roughly batch_size-times speedup.
+
+        Mirrors train()'s interface: returns a history dict with the same
+        keys (populated across the initial settle phase and every subsequent
+        settle round, as one continuous timeline), and leaves the model's own
+        logits in their final state -- here, the fully pinned one-hot
+        assignment -- so extract_hard_seating() / _summarize_assignment()
+        work unchanged afterwards, exactly as they do after train().
         """
         n = self.guest_logits.shape[0]
         optimiser = torch.optim.Adam(self.parameters(), lr=0.01)
@@ -280,6 +291,9 @@ class GradSolver(Solver, nn.Module):
         num_edges = self.table_adjacency.sum()
         pinned: dict[int, int] = {}
         NEG = -1e4
+
+        history = {'guest_score': [], 'seat_score': [], 'cross_entropy': [], 'one_hot': [], 'T_guest': [], 'T_seats': []}
+        epoch = 0
 
         def masked_soft_assignment():
             g_logits = self.guest_logits.clone()
@@ -297,6 +311,7 @@ class GradSolver(Solver, nn.Module):
             return F.softmax(g_logits, dim=1), F.softmax(s_logits, dim=1)
 
         def settle(num_epochs):
+            nonlocal epoch
             for _ in range(num_epochs):
                 optimiser.zero_grad()
                 T_guest, T_seats = masked_soft_assignment()
@@ -312,6 +327,18 @@ class GradSolver(Solver, nn.Module):
                         + lambda_ce * ce + lambda_one_hot * one_hot)
                 loss.backward()
                 optimiser.step()
+
+                if keep_history:
+                    history['guest_score'].append(guest_score.item()/self.n_guests)
+                    history['seat_score'].append(seat_score.item()/self.n_guests)
+                    history['cross_entropy'].append(ce.item())
+                    history['one_hot'].append(one_hot.item())
+                    history['T_guest'].append(T_guest.cpu().detach().numpy())
+                    history['T_seats'].append(T_seats.cpu().detach().numpy())
+                if epoch % 100 == 0:
+                    log(f"(Epoch {epoch+1}) Guest Score: {guest_score/num_edges:.4f}, Seat Score: {seat_score/num_edges:.4f}, "
+                        f"CE: {ce:.4f}, One Hot: {one_hot:.4f}, pinned {len(pinned)}/{n}", verbose=verbose)
+                epoch += 1
 
         settle(initial_epochs)
         while len(pinned) < n:
@@ -333,12 +360,14 @@ class GradSolver(Solver, nn.Module):
             settle(settle_epochs)
             log(f"decimation: pinned {len(pinned)}/{n}", verbose=verbose)
 
-        relation_matrix = self.relation_matrix.cpu().detach().numpy()[:self.n_guests, :self.n_guests]
-        constraint_matrix = self.constraint_matrix.cpu().detach().numpy()[:self.n_guests, :self.n_guests]
-        table_adjacency = self.table_adjacency.cpu().detach().numpy()[:self.n_seats, :self.n_seats]
-        guest_to_seat = np.array([pinned[g] for g in range(self.n_guests)])
+        with torch.no_grad():
+            for g, s in pinned.items():
+                self.guest_logits[g, :] = NEG
+                self.guest_logits[g, s] = 0.0
+                self.seat_logits[s, :] = NEG
+                self.seat_logits[s, g] = 0.0
 
-        return self._summarize_assignment(guest_to_seat, relation_matrix, constraint_matrix, table_adjacency)
+        return history
 
 
 class LocalSearchSolver(Solver):

@@ -28,8 +28,8 @@ def solve(request: SeatingRequest) -> SeatingResponse:
             f"{len(guest_list)} guests but only {total_seats} seats available across all tables."
         )
 
-    NUM_EPOCHS = 100 * len(guest_list)
-    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='uniform')
+    #NUM_EPOCHS = 100 * len(guest_list)
+    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='surjective')
     model.train(lambda_guest=LAMBDA_GUEST, lambda_seat=LAMBDA_SEAT, lambda_ce=LAMBDA_CE, lambda_one_hot=LAMBDA_ONE_HOT, num_epochs=NUM_EPOCHS, keep_history=False, verbose=False)
     guest_to_seat = model.extract_hard_seating()
     local_search = LocalSearchSolver(guest_list=guest_list, table_list=table_list, constraints=constraints)
@@ -59,7 +59,8 @@ def solve(request: SeatingRequest) -> SeatingResponse:
         ]
 
     return SeatingResponse(table_assignments=table_assignments,
-                           avg_score=result['avg_score'],
+                           relation_score=result['relation_score'],
+                           constraint_score=result['constraint_score'],
                            must_sit_together=result['must_sit_together'],
                            could_sit_together=result['could_sit_together'],
                            must_sit_apart=result['must_sit_apart'],

@@ -66,7 +66,8 @@ export interface SeatingResponse {
   // strings once this crosses JSON, even though seat index is an int on the
   // Python side.
   table_assignments: Record<string, Record<string, Guest>>;
-  avg_score: number;
+  relation_score: number;
+  constraint_score: number;
   must_sit_together: ConstraintStats;
   could_sit_together: ConstraintStats;
   must_sit_apart: ConstraintStats;

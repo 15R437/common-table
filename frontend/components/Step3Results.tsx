@@ -139,7 +139,7 @@ export default function Step3Results({
         <>
           <div className="flex flex-wrap gap-4 justify-center mb-6 text-sm">
             <span className="bg-slate-50 rounded-lg px-3 py-2">
-              Score: <strong>{result.avg_score.toFixed(2)}</strong>
+              Score: <strong>{result.relation_score.toFixed(2)}</strong>
             </span>
             <span className="bg-slate-50 rounded-lg px-3 py-2">
               Must sit together: {result.must_sit_together.satisfied}/

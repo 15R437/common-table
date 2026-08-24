@@ -1,4 +1,4 @@
-const STEP_LABELS = ["Table setup", "Guest list", "Result"];
+const STEP_LABELS = ["Table Style", "Guest List", "Result"];
 
 export default function StepProgress({ currentStep }: { currentStep: 1 | 2 | 3 }) {
   return (

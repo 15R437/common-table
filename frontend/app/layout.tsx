@@ -25,19 +25,22 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${oswald.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-page font-sans">
-        <nav className="sticky top-0 z-50 bg-nav backdrop-blur-md border-b border-slate-100 h-20 flex items-center justify-center gap-8">
+        <nav className="sticky top-0 z-50 bg-nav backdrop-blur-md border-b border-slate-100 h-20 grid grid-cols-[1fr_auto_1fr] items-center px-6">
+          <div />
           <Link
             href="/"
-            className="tracking-widest uppercase text-3xl font-display font-bold text-brand-dark"
+            className="tracking-widest uppercase text-3xl font-display font-bold text-brand-dark justify-self-center"
           >
             Common Table
           </Link>
-          <Link
-            href="/about"
-            className="text-sm font-semibold text-slate-500 hover:text-brand-dark transition-colors"
-          >
-            How it works
-          </Link>
+          <div className="justify-self-end">
+            <Link
+              href="/about"
+              className="text-sm font-semibold text-slate-500 hover:text-brand-dark transition-colors"
+            >
+              How it works
+            </Link>
+          </div>
         </nav>
         <div className="flex-1 flex flex-col">{children}</div>
         <footer className="border-t border-slate-100 py-6 text-center text-sm text-slate-400">

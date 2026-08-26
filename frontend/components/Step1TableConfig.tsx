@@ -131,44 +131,12 @@ export default function Step1TableConfig({
               value={value.numSeatsPerTable}
               onChange={(n) => onChange({ ...value, numSeatsPerTable: n })}
             />
-
-            {value.style === "banquet" && (
-              <div className="flex items-center gap-6 pt-8">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={value.headSeat}
-                    onChange={(e) =>
-                      onChange({
-                        ...value,
-                        headSeat: e.target.checked,
-                        footSeat: e.target.checked ? value.footSeat : false,
-                      })
-                    }
-                    className="w-5 h-5 accent-brand-dark"
-                  />
-                  <span className="text-sm font-semibold text-slate-600">
-                    Head seat
-                  </span>
-                </label>
-                <label
-                  className={`flex items-center gap-2 ${
-                    value.headSeat ? "cursor-pointer" : "cursor-not-allowed opacity-50"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={value.footSeat}
-                    disabled={!value.headSeat}
-                    onChange={(e) => onChange({ ...value, footSeat: e.target.checked })}
-                    className="w-5 h-5 accent-brand-dark"
-                  />
-                  <span className="text-sm font-semibold text-slate-600">
-                    Foot seat
-                  </span>
-                </label>
-              </div>
-            )}
+            {/* Head/foot seat controls hidden for now -- the circulant+rotate+ls
+                pipeline consistently underperforms local_search_x10 (~7-9%) on
+                head/foot banquet tables when a cabaret table is also in the
+                request (see backend/scripts/FINDINGS.md §8b). TableConfig still
+                carries headSeat/footSeat (always false) so this is a one-line
+                revert once a validated circulant construction exists. */}
           </div>
         </div>
       )}

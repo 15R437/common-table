@@ -25,7 +25,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${oswald.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-page font-sans">
-        <nav className="sticky top-0 z-50 bg-nav backdrop-blur-md border-b border-slate-100 h-20 grid grid-cols-[1fr_auto_1fr] items-center px-6">
+        <nav className="print:hidden sticky top-0 z-50 bg-nav backdrop-blur-md border-b border-slate-100 h-20 grid grid-cols-[1fr_auto_1fr] items-center px-6">
           <div />
           <Link
             href="/"
@@ -43,7 +43,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           </div>
         </nav>
         <div className="flex-1 flex flex-col">{children}</div>
-        <footer className="border-t border-slate-100 py-6 text-center text-sm text-slate-400">
+        <footer className="print:hidden border-t border-slate-100 py-6 text-center text-sm text-slate-400">
           <p>
             Made by{" "}
             <a

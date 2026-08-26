@@ -73,7 +73,7 @@ guest_list = [Guest(id=0,name="Alex",relation_tags=["alty_boys"]),
 #random.shuffle(guest_list)
 constraints = [Constraint(guest_a_id=2,guest_b_id=3,relationship="must_sit_together")]
 guest_list, constraints = load_guest_data()
-table_list = [BanquetTable(id=i, num_seats=36) for i in range(3)]
+table_list = [CabaretTable(id=i, num_seats=36) for i in range(3)]
 
 
 def extract_hard_seating(T_guest):
@@ -83,7 +83,7 @@ def extract_hard_seating(T_guest):
 
 def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce, lambda_one_hot):
     #torch.manual_seed(seed)
-    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='surjective')
+    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='uniform')
 
     T_guest_before, _ = model.get_soft_assignment()
     T_guest_before = T_guest_before.detach().clone()
@@ -118,4 +118,4 @@ def run_experiment(num_epochs, lambda_guest, lambda_seat, lambda_ce, lambda_one_
     
 
 if __name__ == "__main__":
-    run_experiment(num_epochs=5000, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=50)
+    run_experiment(num_epochs=5000, lambda_guest=1, lambda_seat=1, lambda_ce=50, lambda_one_hot=100)

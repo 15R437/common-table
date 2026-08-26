@@ -24,60 +24,71 @@ class BanquetTable(Table):
     head_seat: Optional[bool] = Field(False, description="If True, a seat is placed at the head of the table")
     foot_seat: Optional[bool] = Field(False, description="If True a seat is placed at the foot of the table")
 
-    def adjacency(self,adj_score=1,opp_score=0.75,diag_opp_score=0.5):
+    def adjacency(self, adj_score=1, opp_score=0.75, diag_opp_score=0.5):
         """
-        Computes the adjacency matrix for the Banquet Table seating arrangement. Element (i,j) is 1 iff
-        seat i and j are adjacent, directly opposite or diagonally opposite each other. Otherwise element (i,j) is 0.
+        Computes the weighted adjacency matrix for the Banquet Table seating arrangement.
+        Row distance dy = 0 represents directly opposite seats in the same row.
+        Row distance dy >= 1 represents steps down the length of the table.
         """
         num_side_seats = self.num_seats - int(self.head_seat) - int(self.foot_seat)
-        adjacency_matrix = np.zeros((self.num_seats,self.num_seats))
+        adjacency_matrix = np.zeros((self.num_seats, self.num_seats))
         offset = int(self.head_seat)
 
-        # head seat to the first row of side seats -- normally two (one on
-        # each side), but there may only be one, or none, on a small table.
+        total_rows = (num_side_seats + 1) // 2
+
+        # 1. Directly opposite seats in the same row (dy = 0)
+        num_full_pairs = num_side_seats // 2
+        if num_full_pairs > 0:
+            even_same_row = offset + 2 * np.arange(num_full_pairs)
+            adjacency_matrix[even_same_row, even_same_row + 1] = opp_score
+
+        # 2. Side seats propagation across row distances (dy >= 1)
+        for dy in range(1, total_rows):
+            # Same-side seats (Left-to-Left and Right-to-Right)
+            seats_same = offset + np.arange(num_side_seats - 2 * dy)
+            adjacency_matrix[seats_same, seats_same + 2 * dy] = adj_score * (2 ** (1 - dy))
+
+            # Cross-side diagonal seats (Left-to-Right)
+            left_seats = offset + 2 * np.arange((num_side_seats - (2 * dy + 1)) // 2 + 1)
+            target_right = left_seats + (2 * dy + 1)
+            valid_lr = target_right < (offset + num_side_seats)
+            adjacency_matrix[left_seats[valid_lr], target_right[valid_lr]] = opp_score * (2 ** (-dy))
+
+            # Cross-side diagonal seats (Right-to-Left)
+            right_seats = offset + 2 * np.arange((num_side_seats - 2 * dy) // 2) + 1
+            target_left = right_seats + (2 * dy - 1)
+            valid_rl = target_left < (offset + num_side_seats)
+            adjacency_matrix[right_seats[valid_rl], target_left[valid_rl]] = opp_score * (2 ** (-dy))
+
+        # 3. Head seat connections
         if self.head_seat:
-            for idx in range(offset, offset + min(2, num_side_seats)):
-                adjacency_matrix[0,idx] = 1
-            if num_side_seats == 0 and self.foot_seat:
-                adjacency_matrix[0,offset] = 1
+            for dy in range(total_rows):
+                weight = adj_score * (2 ** (-dy))
+                left_idx = offset + 2 * dy
+                right_idx = offset + 2 * dy + 1
+                
+                if left_idx < offset + num_side_seats:
+                    adjacency_matrix[0, left_idx] = weight
+                if right_idx < offset + num_side_seats:
+                    adjacency_matrix[0, right_idx] = weight
 
-        #side seats to adjacent and opposite side seats
-        for i in range(num_side_seats-2):
-            idx = i+offset
-            if i%2 == 0:
-                adjacency_matrix[idx,idx+1] = opp_score #directly opposite
-                adjacency_matrix[idx,idx+2] = adj_score #adjacent
-                # the "diagonal opposite" seat is the far seat of the *next*
-                # row -- only wire it up if that next row is complete. With
-                # an odd number of side seats, the final row has no left-hand
-                # seat, so this would otherwise index past the end of the
-                # matrix (see the dangling-seat handling below instead).
-                if i+3 < num_side_seats:
-                    adjacency_matrix[idx,idx+3] = diag_opp_score #diagonal opposite
-            else:
-                adjacency_matrix[idx,idx+1] = diag_opp_score #diagonal opposite
-                adjacency_matrix[idx,idx+2] = adj_score #adjacent
-
-
-        #penultimate side seat to last side seat
-        if num_side_seats >= 2:
-            idx = num_side_seats-2+offset
-            if num_side_seats % 2 == 0:
-                adjacency_matrix[idx,idx+1] = 1 #last row's own pair are directly opposite
-            else:
-                # odd number of side seats: the last seat has no partner in its
-                # own row, so it has no "directly opposite" connection at all --
-                # instead it's diagonally opposite the previous row's other-side
-                # seat, mirroring the diagonal relationship every other row-pair
-                # gets from the loop above.
-                adjacency_matrix[idx,idx+1] = diag_opp_score
-
-        # foot seat to the last row of side seats -- normally two, but may be
-        # one or none on a small table (the head/foot-only case is handled above).
+        # 4. Foot seat connections
         if self.foot_seat:
-            foot_idx = num_side_seats+offset
-            for idx in range(foot_idx - min(2, num_side_seats), foot_idx):
-                adjacency_matrix[foot_idx,idx] = 1
+            foot_idx = self.num_seats - 1
+            for dy in range(total_rows):
+                weight = adj_score * (2 ** (-dy))
+                # Work backwards from the last row
+                row_idx = total_rows - 1 - dy
+                left_idx = offset + 2 * row_idx
+                right_idx = offset + 2 * row_idx + 1
+
+                if left_idx < offset + num_side_seats:
+                    adjacency_matrix[left_idx, foot_idx] = weight
+                if right_idx < offset + num_side_seats:
+                    adjacency_matrix[right_idx, foot_idx] = weight
+
+            if self.head_seat:
+                adjacency_matrix[0, foot_idx] = adj_score * (2 ** (-total_rows))
 
         return adjacency_matrix + adjacency_matrix.T
    
@@ -86,14 +97,28 @@ class CabaretTable(Table):
     full_circle: Optional[bool] = Field(False, description="Are seats aranged all the around the table?")
 
     def adjacency(self):
-        adjacency_matrix = np.zeros((self.num_seats,self.num_seats))
-        rows = np.arange(self.num_seats - 1)
-        cols = np.arange(1, self.num_seats)
-        adjacency_matrix[rows, cols] = 1
-        if self.full_circle:
-            adjacency_matrix[self.num_seats-1,0] = 1
+        adjacency_matrix = np.zeros((self.num_seats, self.num_seats))
         
-        return adjacency_matrix + adjacency_matrix.T
+        if self.full_circle:
+            seats = np.arange(self.num_seats)
+            max_hop = self.num_seats // 2
+
+            for k_hop in range(1, max_hop + 1):
+                weight = 2 ** (1 - k_hop)
+                adjacency_matrix[seats, (seats + k_hop) % self.num_seats] = weight
+                
+                if not (self.num_seats % 2 == 0 and k_hop == max_hop):
+                    adjacency_matrix[seats, (seats - k_hop) % self.num_seats] = weight
+        else:
+            for k_hop in range(1, self.num_seats):
+                weight = 2 ** (1 - k_hop)
+
+                rows = np.arange(self.num_seats - k_hop)
+                cols = rows + k_hop
+                adjacency_matrix[rows, cols] = weight
+                adjacency_matrix[cols, rows] = weight
+                
+        return adjacency_matrix
     
 class TheatreSection(Table):
     type: Literal["theatre"] = "theatre"
@@ -111,20 +136,9 @@ class TheatreSection(Table):
         """
         adjacency_matrix = np.zeros((self.num_seats,self.num_seats))
         n = self.num_seats // self.num_rows # number of seats per row
-
-        # down, right and (down and right) relations
-        seats = np.array([i + row * n for row in range(self.num_rows - 1) for i in range(n-1)])
-        seats_right = seats + 1
-        seats_down = seats + n
-        seats_down_right = seats + n + 1
-        adjacency_matrix[seats, seats_right] = 1
-        adjacency_matrix[seats, seats_down] = 1
-        adjacency_matrix[seats, seats_down_right] = 1
-
-        # (up and right) relations
-        seats = np.array([i + row * n for row in range(1, self.num_rows) for i in range(n-1)])
-        seats_up_right = seats - n + 1
-        adjacency_matrix[seats, seats_up_right] = 1
+        for k_hop in range(1,n):
+            seats = np.array([i + row * n for row in range(self.num_rows) for i in range(n-k_hop)])
+            adjacency_matrix[seats, seats+k_hop] = 2**(1-k_hop)
 
         return adjacency_matrix + adjacency_matrix.T
 

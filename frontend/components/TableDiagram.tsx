@@ -124,7 +124,8 @@ function cabaretLayout(numSeats: number) {
 
 function theatreLayout(numSeats: number, numRows: number) {
   const colW = 42;
-  const rowH = 62; // tall enough that a label below one row can't reach the next
+  const LABEL_LINE_H = 14; // vertical stagger step between adjacent columns' labels
+  const rowH = 62 + LABEL_LINE_H; // tall enough that a staggered label can't reach the next row
   const numCols = numSeats / numRows;
   const seats: SeatPosition[] = [];
   for (let i = 0; i < numSeats; i++) {
@@ -132,12 +133,17 @@ function theatreLayout(numSeats: number, numRows: number) {
     const col = i % numCols;
     const x = col * colW - ((numCols - 1) * colW) / 2;
     const y = row * rowH + 50;
+    // Adjacent seats are only colW apart -- not enough room for two full
+    // names side by side at any real font size. Staggering alternating
+    // columns' labels onto a second line means neighbours never fight for
+    // the same vertical space, regardless of name length.
+    const stagger = col % 2 === 0 ? 0 : LABEL_LINE_H;
     seats.push({
       seatIndex: i,
       x,
       y,
       labelX: x,
-      labelY: y + SEAT_R + LABEL_GAP,
+      labelY: y + SEAT_R + LABEL_GAP + stagger,
       anchor: "middle",
       baseline: "hanging",
     });

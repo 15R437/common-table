@@ -46,3 +46,11 @@ def optimise_layout(request: Request, payload: SeatingRequest):
         return optimiser.solve(payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/v1/optimise/shuffle", response_model=SeatingResponse)
+@limiter.limit("10/minute")
+def shuffle_layout(request: Request, payload: SeatingRequest):
+    try:
+        return optimiser.solve(payload, shuffle=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

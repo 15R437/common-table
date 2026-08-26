@@ -1,5 +1,5 @@
 import numpy as np
-from .schema import SeatingRequest, SeatingResponse, ConstraintViolation
+from .schema import SeatingRequest, SeatingResponse, ConstraintViolation, CabaretTable, BanquetTable, TheatreSection
 from .solvers import GradSolver, LocalSearchSolver
 
 NUM_EPOCHS = 1000
@@ -11,7 +11,178 @@ LAMBDA_ONE_HOT = 100
 MAX_GUESTS = 120
 MAX_SEATS = 120
 
-def solve(request: SeatingRequest) -> SeatingResponse:
+# Cabaret: gradsolver+ls wins unconditionally, at every guest count and tag
+# structure tested (including with empty seats) -- no known losing case, so
+# it's always used regardless of size. Banquet/theatre: the circulant+rotate
+# advantage only shows up at scale, and can lose under realistic multi-tag
+# structure at smaller sizes -- plain local_search_x10 is safer below this
+# threshold, matching the ~10s wall-clock budget this was chosen against.
+LARGE_SCALE_THRESHOLD = 300
+
+# GradSolver's uniform init is deterministic (see solvers.py) -- given the
+# same request, the circulant+rotate+ls path produces the exact same result
+# every time, unlike local_search_x10's random restarts. The "shuffle" button
+# is what gives it any variety at all: GradSolver's raw extraction (after
+# rotation, before the final hill-climb) isn't itself a swap-local optimum,
+# so a different scan order through that hill-climb can converge to a
+# different local optimum (see backend/scripts/smoke_test_shuffle_scan_order.py --
+# a shuffled scan order beat the default in 11/40 sampled instances, lost in
+# 9/40, tied in 20/40). Trying several shuffles and keeping the best alongside
+# the default means the button can only match or improve on the un-shuffled
+# result, never regress it.
+NUM_SHUFFLE_CANDIDATES = 10
+
+
+class _CircularBanquetSurrogate(BanquetTable):
+    """Circulant surrogate for a head/foot-free BanquetTable, matching the
+    real BanquetTable.adjacency()'s hop-decay weight-by-offset shape (see
+    backend/scripts/FINDINGS.md §6's postscript for how this was derived
+    empirically from the real formula) but wrapped modulo num_seats and made
+    a pure function of offset alone (no parity dependence): even offsets get
+    adj_score * 2**(1 - d/2), odd offsets get opp_score * 2**(-(d-1)/2) --
+    the real formula's own EVEN-seat branch, which is the stronger of its two
+    parity variants. Dropping the parity split here is deliberate: the
+    surrogate only needs to be a good enough training target for GradSolver
+    (see _solve_circulant_rotate_ls) -- the final rotate+refine step always
+    scores against the REAL adjacency, parity and all -- so a pure-distance
+    function keeps this provably circulant (see the vertex-transitivity
+    discussion in FINDINGS.md §2) rather than risking a subtle asymmetry
+    from trying to also replicate the parity split across a wraparound where
+    "which seat is closer" becomes ambiguous.
+    """
+    def adjacency(self):
+        n = self.num_seats
+        adj_score, opp_score = 1.0, 0.75
+        m = np.zeros((n, n))
+        for d in range(1, n // 2 + 1):
+            w = adj_score * 2 ** (1 - d / 2) if d % 2 == 0 else opp_score * 2 ** (-(d - 1) / 2)
+            for i in range(n):
+                j = (i + d) % n
+                if i != j:
+                    m[i, j] = w
+                    m[j, i] = w
+        return m
+
+
+class _CircularTheatreSurrogate(TheatreSection):
+    """Circulant surrogate for TheatreSection: each row treated as its own
+    independent ring (first and last seat of the row joined), matching the
+    real TheatreSection.adjacency()'s within-row hop-decay weight exactly
+    (weight = 2**(1-k_hop) per hop, same formula as CabaretTable's own
+    full_circle branch) -- no cross-row edges. Unlike the banquet case, the
+    real theatre formula has no parity dependence at all, so this is an exact
+    circular match, not an approximation.
+    """
+    def adjacency(self):
+        n = self.num_seats
+        rows = self.num_rows
+        row_len = n // rows
+        m = np.zeros((n, n))
+        for r in range(rows):
+            base = r * row_len
+            for hop in range(1, row_len // 2 + 1):
+                weight = 2 ** (1 - hop)
+                for i in range(row_len):
+                    seat_i = base + i
+                    seat_j = base + (i + hop) % row_len
+                    if seat_i != seat_j:
+                        m[seat_i, seat_j] = weight
+                        m[seat_j, seat_i] = weight
+        return m
+
+
+def _circulant_surrogate(table, use_large_scale_surrogate):
+    """A table to train GradSolver against in place of `table`, using a
+    validated circulant (boundary-free) construction where one exists, or
+    None if `table` should be used as-is. Cabaret always gets one (no known
+    losing case). Banquet/theatre only get one when `use_large_scale_surrogate`
+    is set (see LARGE_SCALE_THRESHOLD) -- their circulant advantage is
+    conditional on scale, unlike cabaret's. BanquetTable with a head/foot seat
+    has no validated circulant construction and always returns None."""
+    if isinstance(table, CabaretTable) and not table.full_circle:
+        return CabaretTable(id=table.id, num_seats=table.num_seats, full_circle=True)
+    if not use_large_scale_surrogate:
+        return None
+    if isinstance(table, BanquetTable) and not table.head_seat and not table.foot_seat:
+        return _CircularBanquetSurrogate(id=table.id, num_seats=table.num_seats)
+    if isinstance(table, TheatreSection):
+        return _CircularTheatreSurrogate(id=table.id, num_seats=table.num_seats, num_rows=table.num_rows)
+    return None
+
+
+def _rotate_tables_to_best_fit(seat_to_guest, table_list, surrogate_mask, guest_adjacency, table_adjacency):
+    """For each table trained against a circulant surrogate, try every
+    rotation of that table's seat_to_guest sub-array (including empty seats,
+    represented the same way LocalSearchSolver already represents them --
+    dummy guest indices >= n_guests) and keep whichever scores best under the
+    REAL adjacency. Tables that trained directly on their real structure
+    (surrogate_mask[i] is False) are left untouched."""
+    seat_to_guest = seat_to_guest.copy()
+    start = 0
+    for table, use_surrogate in zip(table_list, surrogate_mask):
+        size = table.num_seats
+        lo, hi = start, start + size
+        if use_surrogate:
+            local = seat_to_guest[lo:hi]
+            sub_table_adj = table_adjacency[lo:hi, lo:hi]
+            best_rot, best_score = 0, -np.inf
+            for r in range(size):
+                rotated = np.roll(local, r)
+                score = np.sum(guest_adjacency[np.ix_(rotated, rotated)] * sub_table_adj)
+                if score > best_score:
+                    best_score, best_rot = score, r
+            seat_to_guest[lo:hi] = np.roll(local, best_rot)
+        start += size
+    return seat_to_guest
+
+
+def _solve_circulant_rotate_ls(guest_list, table_list, constraints, use_large_scale_surrogate, shuffle=False):
+    """Train against a circulant surrogate per table where one is validated
+    (see _circulant_surrogate) -- GradSolver loses to plain local search on
+    real open banquet/theatre tables, but wins cleanly once the table has no
+    boundary. Then search each surrogate-trained table's rotations against
+    the REAL adjacency to find the cheapest place to "cut" it back open, and
+    finish with the usual LocalSearchSolver refine on the real tables
+    throughout.
+
+    If `shuffle` is set, also try NUM_SHUFFLE_CANDIDATES additional hill-climbs
+    with a randomised scan order (see LocalSearchSolver.refine_shuffled) from
+    the same post-rotation starting point, and keep whichever candidate --
+    including the default-order one -- scores best. This is what the
+    "shuffle" button uses to get a different result from an otherwise fully
+    deterministic pipeline."""
+    surrogates = [_circulant_surrogate(table, use_large_scale_surrogate) for table in table_list]
+    surrogate_mask = [s is not None for s in surrogates]
+    surrogate_table_list = [s if s is not None else table for s, table in zip(surrogates, table_list)]
+
+    model = GradSolver(guest_list=guest_list, table_list=surrogate_table_list, constraints=constraints, init_type='uniform')
+    model.train(lambda_guest=LAMBDA_GUEST, lambda_seat=LAMBDA_SEAT, lambda_ce=LAMBDA_CE,
+                lambda_one_hot=LAMBDA_ONE_HOT, num_epochs=NUM_EPOCHS, keep_history=False, verbose=False)
+    guest_to_seat = model.extract_hard_seating()
+
+    real_solver = LocalSearchSolver(guest_list=guest_list, table_list=table_list, constraints=constraints)
+    seat_to_guest = np.argsort(guest_to_seat)
+    seat_to_guest = _rotate_tables_to_best_fit(seat_to_guest, table_list, surrogate_mask,
+                                                real_solver.guest_adjacency, real_solver.table_adjacency)
+
+    if shuffle:
+        rng = np.random.default_rng()
+        candidates = [real_solver.refine(seat_to_guest)]
+        candidates += [real_solver.refine_shuffled(seat_to_guest, rng) for _ in range(NUM_SHUFFLE_CANDIDATES)]
+        best = max(candidates, key=real_solver.score)
+        guest_to_seat = np.argsort(best)
+    else:
+        guest_to_seat = real_solver.solve(initial=seat_to_guest)
+    return real_solver._summarize_assignment(guest_to_seat=guest_to_seat)
+
+
+def _solve_local_search(guest_list, table_list, constraints, num_restarts=10):
+    local_search = LocalSearchSolver(guest_list=guest_list, table_list=table_list, constraints=constraints)
+    guest_to_seat = local_search.solve(num_restarts=num_restarts)
+    return local_search._summarize_assignment(guest_to_seat=guest_to_seat)
+
+
+def solve(request: SeatingRequest, shuffle: bool = False) -> SeatingResponse:
     guest_list = request.guests
     table_list = request.tables
     constraints = request.constraints
@@ -28,14 +199,24 @@ def solve(request: SeatingRequest) -> SeatingResponse:
             f"{len(guest_list)} guests but only {total_seats} seats available across all tables."
         )
 
-    #NUM_EPOCHS = 100 * len(guest_list)
-    model = GradSolver(guest_list=guest_list, table_list=table_list, constraints=constraints, init_type='surjective')
-    model.train(lambda_guest=LAMBDA_GUEST, lambda_seat=LAMBDA_SEAT, lambda_ce=LAMBDA_CE, lambda_one_hot=LAMBDA_ONE_HOT, num_epochs=NUM_EPOCHS, keep_history=False, verbose=False)
-    guest_to_seat = model.extract_hard_seating()
-    local_search = LocalSearchSolver(guest_list=guest_list, table_list=table_list, constraints=constraints)
-    seat_to_guest = np.argsort(guest_to_seat)
-    guest_to_seat = local_search.solve(initial=seat_to_guest)
-    result = model._summarize_assignment(guest_to_seat=guest_to_seat)
+    # Cabaret always wins with gradsolver+ls (no losing case found, including
+    # with empty seats), so its presence alone is enough to use the circulant
+    # pipeline. Banquet/theatre only get a circulant surrogate -- and only
+    # earn the pipeline on their own -- once the guest count clears
+    # LARGE_SCALE_THRESHOLD, where their circulant advantage was validated;
+    # below that, plain local_search_x10 is safer (see the multi-tag/
+    # constraint investigation in backend/scripts/smoke_test_*.py). Only one
+    # method actually runs -- no sequential fallback -- since each branch's
+    # winning conditions are now understood well enough to commit to it.
+    has_cabaret = any(isinstance(table, CabaretTable) for table in table_list)
+    use_large_scale_surrogate = len(guest_list) >= LARGE_SCALE_THRESHOLD
+    if has_cabaret or use_large_scale_surrogate:
+        result = _solve_circulant_rotate_ls(guest_list, table_list, constraints, use_large_scale_surrogate, shuffle=shuffle)
+    else:
+        # Already non-deterministic (random restarts with no fixed seed), so
+        # calling this again already gives a fresh attempt -- no separate
+        # shuffle mechanism needed on this path.
+        result = _solve_local_search(guest_list, table_list, constraints)
 
     table_capacity = [table.num_seats for table in table_list]
     table_cumulative_capacity = np.cumsum(table_capacity)

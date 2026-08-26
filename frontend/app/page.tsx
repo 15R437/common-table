@@ -56,8 +56,10 @@ export default function Home() {
   const tables = buildTables(tableConfig);
 
   return (
-    <main className="max-w-4xl mx-auto mt-12 mb-24 p-8 bg-nav rounded-3xl shadow-brand-glow w-full">
-      <StepProgress currentStep={step} />
+    <main className="max-w-4xl mx-auto mt-12 mb-24 p-8 bg-nav rounded-3xl shadow-brand-glow w-full print:m-0 print:p-0 print:max-w-none print:bg-page print:shadow-none print:rounded-none">
+      <div className="print:hidden">
+        <StepProgress currentStep={step} />
+      </div>
 
       {step === 1 && (
         <Step1TableConfig

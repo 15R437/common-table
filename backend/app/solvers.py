@@ -112,12 +112,21 @@ class Solver(ABC):
             guest_a, guest_b = np.where(constraint_matrix_upper == weight)
             seat_a = guest_to_seat[guest_a]
             seat_b = guest_to_seat[guest_b]
-            connected = self._table_adjacency[seat_a, seat_b] > 0
+            adjacency = self._table_adjacency[seat_a, seat_b]
 
-            # "connected" is good for must_sit_together/could_sit_together,
-            # but it's exactly what must_sit_apart says *shouldn't* happen --
-            # satisfied there means the opposite condition.
-            satisfied_mask = connected if name != 'must_sit_apart' else ~connected
+            # must_sit_together means genuinely adjacent seats (adjacency == 1),
+            # not just "somewhere on the same table" -- the decayed weight given
+            # to every other same-table pair doesn't count. could_sit_together is
+            # a softer nudge, so any same-table connection satisfies it.
+            # must_sit_apart is the opposite of "connected at all": since every
+            # same-table pair now has nonzero adjacency, it's satisfied only when
+            # the pair is on different tables.
+            if name == 'must_sit_together':
+                satisfied_mask = (adjacency == 1)
+            elif name == 'must_sit_apart':
+                satisfied_mask = (adjacency == 0)
+            else:
+                satisfied_mask = (adjacency > 0)
             result[name] = {"satisfied": int(np.sum(satisfied_mask)), "total": len(guest_a)}
 
             if name != 'could_sit_together':
@@ -370,6 +379,22 @@ class GradSolver(Solver, nn.Module):
         return history
 
 
+NEIGHBOR_MAX_HOP = 3
+# Every real Table.adjacency() decays roughly by half per "hop" (see
+# schema.py), and is now a COMPLETE graph -- every seat weakly connected to
+# every other -- rather than the small fixed-degree graphs this solver was
+# originally designed against. A seat only counts as a neighbour if its
+# weight is still within NEIGHBOR_MAX_HOP decay-halvings of that seat's own
+# strongest connection, which bounds neighbour-list size to a small constant
+# regardless of table size -- restoring the O(seat degree) scaling below --
+# at the cost of _swap_delta ignoring genuinely negligible contributions from
+# very distant seats. This only affects which candidate swaps the hill-climb
+# *considers*; score() and the final relation_score/constraint_score always
+# use the full, un-thresholded adjacency exactly as given. See
+# backend/scripts/FINDINGS.md for the measured wall-clock impact (a single
+# 120-seat banquet table went from 30s to a fraction of a second).
+
+
 class LocalSearchSolver(Solver):
     """
     Pure discrete local search: hill-climb a guest<->seat assignment via
@@ -378,8 +403,9 @@ class LocalSearchSolver(Solver):
     seats p and q only changes score terms touching p or q, so the delta only
     needs to sum over p and q's actual table-adjacency neighbors -- which,
     for any real table layout, is a small bounded number regardless of how
-    many guests/seats there are in total. That's what makes this scale: each
-    candidate-swap check costs O(seat degree), not O(n) or O(n^3).
+    many guests/seats there are in total (see NEIGHBOR_MAX_HOP). That's what
+    makes this scale: each candidate-swap check costs O(seat degree), not
+    O(n) or O(n^3).
 
     Usable standalone (random restart + hill-climb, a legitimate simple
     baseline) via solve(), or as a refinement pass on top of another solver's
@@ -411,7 +437,9 @@ class LocalSearchSolver(Solver):
         self.n = n
         self.guest_adjacency = guest_adjacency
         self.table_adjacency = table_adjacency
-        self.neighbors = [np.nonzero(table_adjacency[i])[0] for i in range(n)]
+        row_max = table_adjacency.max(axis=1, keepdims=True)
+        neighbor_threshold = row_max * (2.0 ** -NEIGHBOR_MAX_HOP)
+        self.neighbors = [np.nonzero(table_adjacency[i] > neighbor_threshold[i, 0])[0] for i in range(n)]
 
     def score(self, seat_to_guest: np.ndarray) -> float:
         P = np.zeros((self.n, self.n))
@@ -445,6 +473,28 @@ class LocalSearchSolver(Solver):
                     if self._swap_delta(seat_to_guest, s1, s2) > 1e-9:
                         seat_to_guest[s1], seat_to_guest[s2] = seat_to_guest[s2], seat_to_guest[s1]
                         improved = True
+        return seat_to_guest
+
+    def refine_shuffled(self, seat_to_guest: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        """Same hill-climb as refine(), but the (s1, s2) scan order is
+        reshuffled at the start of every full pass instead of always being
+        range(n) x range(n). A first-improvement hill-climb is path-dependent
+        -- from a starting point that isn't already a local optimum, a
+        different scan order can converge to a different (better or worse)
+        local optimum. Once a state IS a local optimum, no scan order can find
+        an improving swap that isn't there, so this only matters as a way to
+        seed *additional attempts* from a not-yet-converged starting point,
+        never as a way to improve an already-refine()'d result."""
+        seat_to_guest = np.array(seat_to_guest, dtype=int).copy()
+        pairs = [(s1, s2) for s1 in range(self.n) for s2 in range(s1 + 1, self.n)]
+        improved = True
+        while improved:
+            improved = False
+            rng.shuffle(pairs)
+            for s1, s2 in pairs:
+                if self._swap_delta(seat_to_guest, s1, s2) > 1e-9:
+                    seat_to_guest[s1], seat_to_guest[s2] = seat_to_guest[s2], seat_to_guest[s1]
+                    improved = True
         return seat_to_guest
 
     def random_assignment(self, seed=None) -> np.ndarray:

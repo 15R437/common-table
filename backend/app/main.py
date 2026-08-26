@@ -26,7 +26,14 @@ def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 # Comma-separated list of allowed frontend origins, e.g.
 # "http://localhost:3000,https://your-app.vercel.app"
-allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+# Whitespace around each entry is stripped -- CORS matches the Origin header
+# exactly, so "a.com, b.com" (space after the comma) would otherwise silently
+# turn " b.com" into an origin that can never match anything a browser sends.
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,

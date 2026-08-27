@@ -128,6 +128,12 @@ export default function Step2GuestInput({
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const nextIdRef = useRef(value.guests.length);
+  // The tags input shows this raw, still-being-typed text rather than
+  // guest.relation_tags.join("; "). Deriving the field's value straight from
+  // the parsed tags array fights the user mid-keystroke: splitTags() drops
+  // the empty segment after a trailing "," or ";", so the character a user
+  // just typed would immediately disappear from the input on every render.
+  const [tagDrafts, setTagDrafts] = useState<Record<GuestId, string>>({});
   const [constraintDraft, setConstraintDraft] = useState<{
     guestAId: GuestId | "";
     guestBId: GuestId | "";
@@ -155,6 +161,12 @@ export default function Step2GuestInput({
       constraints: value.constraints.filter(
         (c) => c.guest_a_id !== id && c.guest_b_id !== id
       ),
+    });
+    setTagDrafts((drafts) => {
+      if (!(id in drafts)) return drafts;
+      const rest = { ...drafts };
+      delete rest[id];
+      return rest;
     });
   }
 
@@ -195,6 +207,7 @@ export default function Step2GuestInput({
         return;
       }
       nextIdRef.current = parsed.guests.length;
+      setTagDrafts({});
       onChange({ guests: parsed.guests, constraints: parsed.constraints });
       setUploadWarnings(parsed.warnings);
       setUploadSuccess(
@@ -296,12 +309,13 @@ export default function Step2GuestInput({
                 className="border-2 border-slate-200 rounded-lg p-2 flex-1 focus:border-brand-dark outline-none"
               />
               <input
-                value={guest.relation_tags.join("; ")}
-                onChange={(e) =>
+                value={tagDrafts[guest.id] ?? guest.relation_tags.join("; ")}
+                onChange={(e) => {
+                  setTagDrafts((drafts) => ({ ...drafts, [guest.id]: e.target.value }));
                   updateGuest(guest.id, {
                     relation_tags: splitTags(e.target.value),
-                  })
-                }
+                  });
+                }}
                 placeholder="Tags (comma or semicolon separated, e.g. friends, university)"
                 className="border-2 border-slate-200 rounded-lg p-2 flex-1 focus:border-brand-dark outline-none"
               />

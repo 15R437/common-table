@@ -271,7 +271,7 @@ function FeedbackPrompt({
   if (sent) {
     return (
       <div className="print:hidden mt-10 text-center text-sm text-slate-500">
-        Thank you — that&apos;s genuinely useful.
+        Thank you, that&apos;s genuinely useful.
       </div>
     );
   }
@@ -301,7 +301,7 @@ function FeedbackPrompt({
           <label htmlFor="feedback-message" className="block text-sm text-slate-500 mb-2">
             {verdict === "up"
               ? "Thanks! Anything that would have made it easier?"
-              : "Sorry about that — what went wrong?"}
+              : "Sorry about that. What went wrong?"}
           </label>
           <textarea
             id="feedback-message"
@@ -411,7 +411,9 @@ export default function Step3Results({
   const [lastSwap, setLastSwap] = useState<{
     from: SeatRef;
     to: SeatRef;
-    names: [string, string];
+    movedName: string;
+    /** Null when the guest was moved into a seat that was empty. */
+    displacedName: string | null;
   } | null>(null);
   const [edited, setEdited] = useState(false);
   const [rescoreFailed, setRescoreFailed] = useState(false);
@@ -487,7 +489,8 @@ export default function Step3Results({
       showSwapConfirmation({
         from,
         to,
-        names: [movedName ?? "that guest", displacedName ?? "the empty seat"],
+        movedName: movedName ?? "that guest",
+        displacedName: displacedName ?? null,
       });
     }
     // Shown immediately, then re-scored: the seats are the user's to move, so
@@ -522,7 +525,7 @@ export default function Step3Results({
   function showSwapConfirmation(next: NonNullable<typeof lastSwap>) {
     if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
     setLastSwap(next);
-    confirmationTimer.current = setTimeout(() => setLastSwap(null), 5000);
+    confirmationTimer.current = setTimeout(() => setLastSwap(null), 3000);
   }
 
   function clearSwapConfirmation() {
@@ -585,7 +588,7 @@ export default function Step3Results({
       </h2>
       {status === "done" && (
         <p className="print:hidden text-center text-slate-500 mb-6">
-          Now make it your own — tap a guest, then tap the seat you&apos;d like them to
+          Now make it your own. Tap a guest, then tap the seat you&apos;d like them to
           swap with.
         </p>
       )}
@@ -616,8 +619,8 @@ export default function Step3Results({
               {selectedSeat ? (
                 <div className="flex flex-wrap items-center justify-center gap-3 bg-amber-50 border border-amber-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
                   <span className="text-amber-800">
-                    <strong>{selectedGuestName}</strong> picked up — now choose the seat to swap
-                    them with.
+                    <strong>{selectedGuestName}</strong> picked up. Now choose the seat to
+                    swap them with.
                   </span>
                   <button
                     type="button"
@@ -631,8 +634,16 @@ export default function Step3Results({
                 lastSwap && (
                   <div className="flex flex-wrap items-center justify-center gap-3 bg-emerald-50 border border-emerald-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
                     <span className="text-emerald-900">
-                      Swapped <strong>{lastSwap.names[0]}</strong> and{" "}
-                      <strong>{lastSwap.names[1]}</strong>.
+                      {lastSwap.displacedName ? (
+                        <>
+                          Swapped <strong>{lastSwap.movedName}</strong> and{" "}
+                          <strong>{lastSwap.displacedName}</strong>.
+                        </>
+                      ) : (
+                        <>
+                          Swapped <strong>{lastSwap.movedName}</strong> with an empty seat.
+                        </>
+                      )}
                     </span>
                     <button
                       type="button"

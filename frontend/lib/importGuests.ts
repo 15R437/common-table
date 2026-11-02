@@ -381,7 +381,7 @@ export function buildGuestList(
 
   if (unnamed > 0) {
     notes.push(
-      `${unnamed} ${unnamed === 1 ? "row" : "rows"} had no name and ${unnamed === 1 ? "was" : "were"} skipped — add a name (e.g. "Dan's guest") if ${unnamed === 1 ? "it's" : "they're"} a plus one.`
+      `${unnamed} ${unnamed === 1 ? "row" : "rows"} had no name and ${unnamed === 1 ? "was" : "were"} skipped. Add a name (e.g. "Dan's guest") if ${unnamed === 1 ? "it's" : "they're"} a plus one.`
     );
   }
 

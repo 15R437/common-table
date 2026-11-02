@@ -124,7 +124,7 @@ export default function Step2GuestInput({
 
     if (!a || !b) {
       setConstraintError(
-        `Pick two guests from your list — we couldn't find ${!a ? `"${constraintDraft.guestAName}"` : `"${constraintDraft.guestBName}"`}.`
+        `Pick two guests from your list. We couldn't find ${!a ? `"${constraintDraft.guestAName}"` : `"${constraintDraft.guestBName}"`}.`
       );
       return;
     }
@@ -294,8 +294,8 @@ export default function Step2GuestInput({
       <div className="p-6 sm:p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
         <h3 className="text-lg font-bold text-brand-dark mb-1">Who sits with whom</h3>
         <p className="text-sm text-slate-500 mb-4">
-          Optional — things the social groups don&apos;t capture: who you know gets on,
-          and who is best kept apart.
+          Optional. For the things your social groups don&apos;t capture: who you know
+          gets on, and who is best kept apart.
           {value.constraints.length > 0 && ` ${value.constraints.length} so far.`}
         </p>
         <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:items-center mb-2">

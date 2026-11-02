@@ -48,7 +48,7 @@ function ColumnSelect({
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
         className="border-2 border-slate-200 rounded-lg p-2 text-sm focus:border-brand-dark outline-none bg-white"
       >
-        {allowNone && <option value="">— none —</option>}
+        {allowNone && <option value="">None</option>}
         {headers.map((header, i) => (
           <option key={i} value={i}>
             {header}
@@ -103,7 +103,7 @@ export default function GuestImporter({
   function stage(table: DetectedTable, source: string, constraintGrid?: Grid) {
     if (table.rows.length === 0) {
       setError(
-        "That looks empty — there's a header row but no guests underneath it."
+        "That looks empty. There's a header row, but no guests underneath it."
       );
       setStaged(null);
       return;
@@ -156,12 +156,12 @@ export default function GuestImporter({
       }
       stage(
         detectTable(grid),
-        sheetName ? `${file.name} — sheet "${sheetName}"` : file.name,
+        sheetName ? `${file.name}, sheet "${sheetName}"` : file.name,
         constraintGrid
       );
     } catch {
       setError(
-        "Couldn't read that file. A .xlsx, .xls or .csv exported from your spreadsheet should work — or paste the list instead."
+        "Couldn't read that file. A .xlsx, .xls or .csv exported from your spreadsheet should work, or you can paste the list in instead."
       );
     }
   }
@@ -185,7 +185,7 @@ export default function GuestImporter({
     <div className="p-6 sm:p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
       <h3 className="text-lg font-bold text-brand-dark mb-1">Bring in your guest list</h3>
       <p className="text-sm text-slate-500 mb-5">
-        Already have it in a spreadsheet? Paste it in as it is — whatever your columns are
+        Already have it in a spreadsheet? Paste it in as it is. Whatever your columns are
         called, you&apos;ll get a chance to confirm what&apos;s what.
       </p>
 
@@ -237,7 +237,7 @@ export default function GuestImporter({
               spreadsheet
             </span>
             <span className="text-xs text-slate-400 mt-1">
-              .xlsx, .xls or .csv — exported from anywhere. Your own column names are fine.
+              .xlsx, .xls or .csv, exported from anywhere. Your own column names are fine.
             </span>
             <input
               ref={fileInputRef}
@@ -303,7 +303,7 @@ export default function GuestImporter({
             )}
             <ColumnSelect
               label="Social group"
-              hint="Which set each guest belongs to — often a Side, Group or Category column"
+              hint="Which set each guest belongs to, often a Side, Group or Category column"
               headers={headers}
               value={staged.mapping.groupColumn}
               onChange={(next) => updateMapping({ groupColumn: next })}
@@ -356,7 +356,7 @@ export default function GuestImporter({
                       <tr key={guest.id}>
                         <td className="px-3 py-2 whitespace-nowrap">{guest.name}</td>
                         <td className="px-3 py-2 text-slate-500">
-                          {guest.relation_tags.join(", ") || "—"}
+                          {guest.relation_tags.join(", ") || "None"}
                         </td>
                       </tr>
                     ))}

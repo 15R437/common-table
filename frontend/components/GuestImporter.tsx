@@ -310,7 +310,7 @@ export default function GuestImporter({
             />
             <ColumnSelect
               label="Keep together"
-              hint="Pairs sit side by side, larger groups share a table"
+              hint="For guests who must sit next to each other, e.g. couples"
               headers={headers}
               value={staged.mapping.partyColumn}
               onChange={(next) => updateMapping({ partyColumn: next })}

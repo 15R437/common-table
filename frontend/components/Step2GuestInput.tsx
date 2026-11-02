@@ -1,22 +1,22 @@
 "use client";
 
-import { useRef, useState } from "react";
-import * as XLSX from "xlsx";
+import { useMemo, useRef, useState } from "react";
 import { Constraint, Guest, GuestId, Relationship } from "@/lib/types";
 import {
   RELATIONSHIP_OPTIONS,
-  labelToRelationship,
   relationshipToLabel,
 } from "@/lib/relationshipLabels";
+import GuestImporter from "./GuestImporter";
 
 export interface GuestData {
   guests: Guest[];
   constraints: Constraint[];
 }
 
-interface ParsedSpreadsheet extends GuestData {
-  warnings: string[];
-}
+// Mirrors MAX_GUESTS in backend/app/optimiser.py. Checked here so an oversized
+// list is caught while it can still be trimmed, rather than by a 400 from the
+// server after the user has pressed Optimise.
+const MAX_GUESTS = 120;
 
 // Accepts either a comma or a semicolon as the tag separator.
 function splitTags(raw: string): string[] {
@@ -26,108 +26,23 @@ function splitTags(raw: string): string[] {
     .filter(Boolean);
 }
 
-async function parseSpreadsheet(file: File): Promise<ParsedSpreadsheet> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const warnings: string[] = [];
-
-  const guestSheetName =
-    workbook.SheetNames.find((n) => /guest/i.test(n)) ?? workbook.SheetNames[0];
-  const guestRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-    workbook.Sheets[guestSheetName]
-  );
-
-  const guests: Guest[] = guestRows
-    .map((row, i) => ({
-      id: i,
-      name: String(row.name ?? row.Name ?? "").trim(),
-      relation_tags: splitTags(String(row.tags ?? row.Tags ?? "")),
-    }))
-    .filter((g) => g.name.length > 0);
-
-  // Names that appear more than once (case-insensitive) are ambiguous for
-  // constraint matching -- excluded from the lookup entirely rather than
-  // silently resolving to "whichever guest happened to be added last".
-  const nameCounts = new Map<string, number>();
-  for (const g of guests) {
-    const key = g.name.toLowerCase();
-    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
-  }
-  const duplicateNames = [...nameCounts.entries()]
-    .filter(([, count]) => count > 1)
-    .map(([name]) => name);
-  if (duplicateNames.length > 0) {
-    warnings.push(
-      `These guest names appear more than once, so constraints can't reliably reference them: ${duplicateNames.join(", ")}. Make names unique (e.g. add a last initial) to fix this.`
-    );
-  }
-
-  const nameToId = new Map<string, GuestId>();
-  for (const g of guests) {
-    const key = g.name.toLowerCase();
-    if (!duplicateNames.includes(key)) {
-      nameToId.set(key, g.id);
-    }
-  }
-
-  const constraintSheetName = workbook.SheetNames.find((n) =>
-    /constraint/i.test(n)
-  );
-  const constraints: Constraint[] = [];
-  if (constraintSheetName) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets[constraintSheetName]
-    );
-    rows.forEach((row, i) => {
-      const rowNumber = i + 2; // header is row 1, so first data row is row 2
-      const aName = String(row.guest_a ?? row["Guest A"] ?? "").trim();
-      const bName = String(row.guest_b ?? row["Guest B"] ?? "").trim();
-      const relationshipLabel = String(row.relationship ?? row.Relationship ?? "").trim();
-      const guestAId = nameToId.get(aName.toLowerCase());
-      const guestBId = nameToId.get(bName.toLowerCase());
-      const relationship = labelToRelationship(relationshipLabel);
-
-      if (guestAId === undefined) {
-        warnings.push(`Constraints row ${rowNumber}: couldn't find a guest named "${aName}" (guest_a).`);
-      }
-      if (guestBId === undefined) {
-        warnings.push(`Constraints row ${rowNumber}: couldn't find a guest named "${bName}" (guest_b).`);
-      }
-      if (relationship === undefined) {
-        const expected = RELATIONSHIP_OPTIONS.map((o) => o.label).join(", ");
-        warnings.push(
-          `Constraints row ${rowNumber}: "${relationshipLabel}" isn't a valid relationship (expected ${expected}).`
-        );
-      }
-
-      if (guestAId !== undefined && guestBId !== undefined && relationship !== undefined) {
-        constraints.push({
-          guest_a_id: guestAId,
-          guest_b_id: guestBId,
-          relationship,
-        });
-      }
-    });
-  }
-
-  return { guests, constraints, warnings };
-}
-
 export default function Step2GuestInput({
   value,
   onChange,
   onOptimise,
   onBack,
+  totalSeats,
+  seatUnit,
 }: {
   value: GuestData;
   onChange: (next: GuestData) => void;
   onOptimise: () => void;
   onBack: () => void;
+  totalSeats: number;
+  seatUnit: string;
 }) {
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const nextIdRef = useRef(value.guests.length);
+  const [importSummary, setImportSummary] = useState<string[] | null>(null);
   // The tags input shows this raw, still-being-typed text rather than
   // guest.relation_tags.join("; "). Deriving the field's value straight from
   // the parsed tags array fights the user mid-keystroke: splitTags() drops
@@ -135,10 +50,18 @@ export default function Step2GuestInput({
   // just typed would immediately disappear from the input on every render.
   const [tagDrafts, setTagDrafts] = useState<Record<GuestId, string>>({});
   const [constraintDraft, setConstraintDraft] = useState<{
-    guestAId: GuestId | "";
-    guestBId: GuestId | "";
+    guestAName: string;
+    guestBName: string;
     relationship: Relationship;
-  }>({ guestAId: "", guestBId: "", relationship: "must_sit_together" });
+  }>({ guestAName: "", guestBName: "", relationship: "must_sit_together" });
+  const [constraintError, setConstraintError] = useState<string | null>(null);
+
+  function handleImport(guests: Guest[], constraints: Constraint[], summary: string[]) {
+    nextIdRef.current = guests.length;
+    setTagDrafts({});
+    onChange({ guests, constraints });
+    setImportSummary(summary);
+  }
 
   function addGuest() {
     const id = nextIdRef.current++;
@@ -170,21 +93,64 @@ export default function Step2GuestInput({
     });
   }
 
+  function clearAll() {
+    onChange({ guests: [], constraints: [] });
+    setTagDrafts({});
+    setImportSummary(null);
+    nextIdRef.current = 0;
+  }
+
+  // Names rather than ids in the constraint draft, so the two fields can be a
+  // typeahead instead of a pair of <select>s. At wedding scale a plain dropdown
+  // means scrolling a list of 120 names, twice, for every constraint added.
+  const guestByName = useMemo(() => {
+    const map = new Map<string, Guest>();
+    for (const guest of value.guests) {
+      const key = guest.name.trim().toLowerCase();
+      if (key) map.set(key, guest);
+    }
+    return map;
+  }, [value.guests]);
+
+  const knownTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const guest of value.guests) for (const tag of guest.relation_tags) tags.add(tag);
+    return [...tags].sort();
+  }, [value.guests]);
+
   function addConstraint() {
-    if (constraintDraft.guestAId === "" || constraintDraft.guestBId === "") return;
-    if (constraintDraft.guestAId === constraintDraft.guestBId) return;
+    const a = guestByName.get(constraintDraft.guestAName.trim().toLowerCase());
+    const b = guestByName.get(constraintDraft.guestBName.trim().toLowerCase());
+
+    if (!a || !b) {
+      setConstraintError(
+        `Pick two guests from your list. We couldn't find ${!a ? `"${constraintDraft.guestAName}"` : `"${constraintDraft.guestBName}"`}.`
+      );
+      return;
+    }
+    if (a.id === b.id) {
+      setConstraintError("Those are the same guest.");
+      return;
+    }
+    const exists = value.constraints.some(
+      (c) =>
+        (c.guest_a_id === a.id && c.guest_b_id === b.id) ||
+        (c.guest_a_id === b.id && c.guest_b_id === a.id)
+    );
+    if (exists) {
+      setConstraintError(`There's already a rule between ${a.name} and ${b.name}.`);
+      return;
+    }
+
+    setConstraintError(null);
     onChange({
       ...value,
       constraints: [
         ...value.constraints,
-        {
-          guest_a_id: constraintDraft.guestAId,
-          guest_b_id: constraintDraft.guestBId,
-          relationship: constraintDraft.relationship,
-        },
+        { guest_a_id: a.id, guest_b_id: b.id, relationship: constraintDraft.relationship },
       ],
     });
-    setConstraintDraft({ guestAId: "", guestBId: "", relationship: "must_sit_together" });
+    setConstraintDraft({ guestAName: "", guestBName: "", relationship: constraintDraft.relationship });
   }
 
   function removeConstraint(index: number) {
@@ -194,50 +160,18 @@ export default function Step2GuestInput({
     });
   }
 
-  async function handleFile(file: File) {
-    setUploadError(null);
-    setUploadWarnings([]);
-    setUploadSuccess(null);
-    try {
-      const parsed = await parseSpreadsheet(file);
-      if (parsed.guests.length === 0) {
-        setUploadError(
-          "No guests found. Expect a sheet (tab) with a 'name' column, and optionally a 'tags' column."
-        );
-        return;
-      }
-      nextIdRef.current = parsed.guests.length;
-      setTagDrafts({});
-      onChange({ guests: parsed.guests, constraints: parsed.constraints });
-      setUploadWarnings(parsed.warnings);
-      setUploadSuccess(
-        `Uploaded ${parsed.guests.length} guest${parsed.guests.length === 1 ? "" : "s"}` +
-          (parsed.constraints.length > 0
-            ? ` and ${parsed.constraints.length} constraint${parsed.constraints.length === 1 ? "" : "s"}.`
-            : ".")
-      );
-    } catch {
-      setUploadError("Couldn't read that file. Make sure it's a .xlsx file.");
-    }
-  }
-
   function guestName(id: GuestId) {
     return value.guests.find((g) => g.id === id)?.name ?? "?";
   }
 
-  // <select> options always report their value as a string via
-  // e.target.value, regardless of the type passed into value={...} on the
-  // <option>. Guest IDs can be string | number, so we look the guest back up
-  // by matching its stringified id, rather than assuming a type and
-  // reconstructing it (which is what caused the original bug: assuming
-  // "always a number" silently sent a string id to the backend).
-  function findGuestId(rawSelectValue: string): GuestId | "" {
-    if (rawSelectValue === "") return "";
-    const guest = value.guests.find((g) => String(g.id) === rawSelectValue);
-    return guest ? guest.id : "";
-  }
-
-  const isValid = value.guests.length > 0 && value.guests.every((g) => g.name.trim());
+  const namedGuests = value.guests.filter((g) => g.name.trim()).length;
+  const overCapacity = value.guests.length > totalSeats;
+  const overMax = value.guests.length > MAX_GUESTS;
+  const isValid =
+    value.guests.length > 0 &&
+    value.guests.every((g) => g.name.trim()) &&
+    !overCapacity &&
+    !overMax;
 
   return (
     <div>
@@ -245,91 +179,109 @@ export default function Step2GuestInput({
         Enter your guest list
       </h2>
 
-      <div className="p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
-        <label
-          htmlFor="guest-file-upload"
-          className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-brand-dark transition-colors text-center"
-        >
-          <span className="text-sm text-slate-600">
-            <span className="font-semibold text-brand-dark">Click to upload</span> a .xlsx
-            spreadsheet
-          </span>
-          <span className="text-xs text-slate-400 mt-1">
-            One sheet named &quot;Guests&quot; (columns: name, tags — separate multiple
-            tags with a comma or semicolon, e.g. &quot;friends, university&quot;), optionally a
-            &quot;Constraints&quot; sheet (columns: guest_a, guest_b, relationship).
-            Uploading replaces the list below.
-          </span>
-          <input
-            id="guest-file-upload"
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-          />
-        </label>
-        <a
-          href="/guest-list-template.xlsx"
-          download
-          className="block text-center text-sm font-semibold text-brand-dark hover:underline mt-3"
-        >
-          Download the guest list template
-        </a>
-        {uploadError && (
-          <p className="text-sm text-red-600 mt-3">{uploadError}</p>
-        )}
-        {uploadSuccess && (
-          <p className="text-sm text-green-700 bg-green-50 rounded-lg p-3 mt-3 font-semibold">
-            ✓ {uploadSuccess}
+      <GuestImporter onImport={handleImport} />
+
+      {importSummary && importSummary.length > 0 && (
+        <div className="mb-8 text-sm text-slate-600 bg-brand-light rounded-2xl p-5">
+          <p className="font-semibold text-brand-dark mb-1">What we did with your list</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {importSummary.map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="p-6 sm:p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+          <h3 className="text-lg font-bold text-brand-dark">Guests</h3>
+          <div className="flex items-center gap-3">
+            <span
+              className={`text-sm font-semibold ${
+                overCapacity || overMax ? "text-red-600" : "text-slate-400"
+              }`}
+            >
+              {value.guests.length} {value.guests.length === 1 ? "guest" : "guests"} ·{" "}
+              {totalSeats} {seatUnit}
+            </span>
+            {value.guests.length > 0 && (
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-xs font-semibold text-slate-400 hover:text-red-600"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Capacity is checked here rather than on submit: the seating style was
+            chosen before the guest list existed, so the first moment either
+            number is known is now. */}
+        {overCapacity && !overMax && (
+          <p className="text-sm text-red-600 mb-4">
+            That&apos;s {value.guests.length - totalSeats} more{" "}
+            {value.guests.length - totalSeats === 1 ? "guest" : "guests"} than you have{" "}
+            {seatUnit}. Go back and add{" "}
+            {Math.ceil((value.guests.length - totalSeats) / 2)} or so more, or remove a few
+            guests.
           </p>
         )}
-        {uploadWarnings.length > 0 && (
-          <div className="mt-3 text-sm text-amber-700 bg-amber-50 rounded-lg p-3">
-            <p className="font-semibold mb-1">
-              Uploaded, but {uploadWarnings.length === 1 ? "one thing" : `${uploadWarnings.length} things`} needs a look:
-            </p>
-            <ul className="list-disc list-inside space-y-0.5">
-              {uploadWarnings.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          </div>
+        {overMax && (
+          <p className="text-sm text-red-600 mb-4">
+            {value.guests.length} guests is past the {MAX_GUESTS} this planner can arrange at
+            once.
+          </p>
         )}
-      </div>
+        {value.guests.length > 0 && namedGuests < value.guests.length && (
+          <p className="text-sm text-amber-700 mb-4">
+            {value.guests.length - namedGuests}{" "}
+            {value.guests.length - namedGuests === 1 ? "guest needs" : "guests need"} a name
+            before you can carry on.
+          </p>
+        )}
 
-      <div className="p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
-        <h3 className="text-lg font-bold text-brand-dark mb-4">Guests</h3>
         <div className="flex flex-col gap-3">
           {value.guests.map((guest) => (
-            <div key={guest.id} className="flex gap-3 items-center">
+            <div
+              key={guest.id}
+              className="flex flex-col sm:flex-row gap-2 sm:gap-3 sm:items-center border-b border-slate-50 sm:border-0 pb-3 sm:pb-0 last:border-0 last:pb-0"
+            >
               <input
                 value={guest.name}
                 onChange={(e) => updateGuest(guest.id, { name: e.target.value })}
                 placeholder="Name"
-                className="border-2 border-slate-200 rounded-lg p-2 flex-1 focus:border-brand-dark outline-none"
+                className="border-2 border-slate-200 rounded-lg p-2 flex-1 min-w-0 focus:border-brand-dark outline-none"
               />
-              <input
-                value={tagDrafts[guest.id] ?? guest.relation_tags.join("; ")}
-                onChange={(e) => {
-                  setTagDrafts((drafts) => ({ ...drafts, [guest.id]: e.target.value }));
-                  updateGuest(guest.id, {
-                    relation_tags: splitTags(e.target.value),
-                  });
-                }}
-                placeholder="Tags (comma or semicolon separated, e.g. friends, university)"
-                className="border-2 border-slate-200 rounded-lg p-2 flex-1 focus:border-brand-dark outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => removeGuest(guest.id)}
-                className="text-slate-400 hover:text-red-600 px-2"
-                aria-label={`Remove ${guest.name || "guest"}`}
-              >
-                ✕
-              </button>
+              <div className="flex gap-2 sm:gap-3 items-center flex-1 min-w-0">
+                <input
+                  value={tagDrafts[guest.id] ?? guest.relation_tags.join("; ")}
+                  onChange={(e) => {
+                    setTagDrafts((drafts) => ({ ...drafts, [guest.id]: e.target.value }));
+                    updateGuest(guest.id, { relation_tags: splitTags(e.target.value) });
+                  }}
+                  list="known-tags"
+                  placeholder="Groups, e.g. uni friends"
+                  className="border-2 border-slate-200 rounded-lg p-2 flex-1 min-w-0 focus:border-brand-dark outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeGuest(guest.id)}
+                  className="text-slate-400 hover:text-red-600 px-2 shrink-0"
+                  aria-label={`Remove ${guest.name || "guest"}`}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           ))}
         </div>
+        <datalist id="known-tags">
+          {knownTags.map((tag) => (
+            <option key={tag} value={tag} />
+          ))}
+        </datalist>
         <button
           type="button"
           onClick={addGuest}
@@ -339,26 +291,23 @@ export default function Step2GuestInput({
         </button>
       </div>
 
-      <div className="p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
-        <h3 className="text-lg font-bold text-brand-dark mb-4">Constraints (optional)</h3>
-        <div className="flex flex-wrap gap-3 items-center mb-4">
-          <select
-            value={constraintDraft.guestAId}
+      <div className="p-6 sm:p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
+        <h3 className="text-lg font-bold text-brand-dark mb-1">Who sits with whom</h3>
+        <p className="text-sm text-slate-500 mb-4">
+          Optional. For the things your groups don&apos;t capture: who you know gets on,
+          and who is best kept apart.
+          {value.constraints.length > 0 && ` ${value.constraints.length} so far.`}
+        </p>
+        <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:items-center mb-2">
+          <input
+            value={constraintDraft.guestAName}
             onChange={(e) =>
-              setConstraintDraft((d) => ({
-                ...d,
-                guestAId: findGuestId(e.target.value),
-              }))
+              setConstraintDraft((d) => ({ ...d, guestAName: e.target.value }))
             }
-            className="border-2 border-slate-200 rounded-lg p-2"
-          >
-            <option value="">Guest A</option>
-            {value.guests.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name || `Guest ${g.id}`}
-              </option>
-            ))}
-          </select>
+            list="guest-names"
+            placeholder="Start typing a name"
+            className="border-2 border-slate-200 rounded-lg p-2 flex-1 min-w-0 focus:border-brand-dark outline-none"
+          />
           <select
             value={constraintDraft.relationship}
             onChange={(e) =>
@@ -367,7 +316,7 @@ export default function Step2GuestInput({
                 relationship: e.target.value as Relationship,
               }))
             }
-            className="border-2 border-slate-200 rounded-lg p-2"
+            className="border-2 border-slate-200 rounded-lg p-2 bg-white"
           >
             {RELATIONSHIP_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -375,36 +324,36 @@ export default function Step2GuestInput({
               </option>
             ))}
           </select>
-          <select
-            value={constraintDraft.guestBId}
+          <input
+            value={constraintDraft.guestBName}
             onChange={(e) =>
-              setConstraintDraft((d) => ({
-                ...d,
-                guestBId: findGuestId(e.target.value),
-              }))
+              setConstraintDraft((d) => ({ ...d, guestBName: e.target.value }))
             }
-            className="border-2 border-slate-200 rounded-lg p-2"
-          >
-            <option value="">Guest B</option>
-            {value.guests.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name || `Guest ${g.id}`}
-              </option>
-            ))}
-          </select>
+            list="guest-names"
+            placeholder="Start typing a name"
+            className="border-2 border-slate-200 rounded-lg p-2 flex-1 min-w-0 focus:border-brand-dark outline-none"
+          />
           <button
             type="button"
             onClick={addConstraint}
-            className="text-sm font-semibold text-brand-dark hover:underline"
+            className="text-sm font-semibold text-brand-dark hover:underline self-start sm:self-auto"
           >
             + Add
           </button>
         </div>
+        <datalist id="guest-names">
+          {value.guests
+            .filter((g) => g.name.trim())
+            .map((g) => (
+              <option key={g.id} value={g.name} />
+            ))}
+        </datalist>
+        {constraintError && <p className="text-sm text-red-600 mb-3">{constraintError}</p>}
         <ul className="flex flex-col gap-2">
           {value.constraints.map((c, i) => (
             <li
               key={i}
-              className="flex justify-between items-center text-sm bg-slate-50 rounded-lg px-3 py-2"
+              className="flex justify-between items-center gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2"
             >
               <span>
                 {guestName(c.guest_a_id)}{" "}
@@ -416,7 +365,8 @@ export default function Step2GuestInput({
               <button
                 type="button"
                 onClick={() => removeConstraint(i)}
-                className="text-slate-400 hover:text-red-600"
+                className="text-slate-400 hover:text-red-600 shrink-0"
+                aria-label="Remove this rule"
               >
                 ✕
               </button>
@@ -425,7 +375,7 @@ export default function Step2GuestInput({
         </ul>
       </div>
 
-      <div className="sticky bottom-0 bg-nav pt-4 pb-2 border-t border-slate-200 flex justify-between">
+      <div className="sticky bottom-0 bg-nav pt-4 pb-2 border-t border-slate-200 flex justify-between gap-3">
         <button
           type="button"
           onClick={onBack}

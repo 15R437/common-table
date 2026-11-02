@@ -161,6 +161,28 @@ class SeatingRequest(BaseModel):
     tables: List[TableType]
     constraints: List[Constraint]
 
+class EvaluateRequest(SeatingRequest):
+    """Score a seating arrangement the user has edited by hand.
+
+    The frontend lets guests be swapped between seats after optimisation. It
+    cannot recompute the constraint counts itself: must_sit_together is only
+    satisfied by genuinely adjacent seats, which depends on each table type's
+    adjacency matrix (see Table.adjacency) rather than on "same table". Rather
+    than reimplement that in TypeScript and have the two drift, the edited
+    arrangement comes back here to be scored by the same code that produced it.
+    """
+    assignment: dict[str | int, dict[int, str | int]] = Field(
+        ...,
+        description="table id -> seat index -> guest id, mirroring SeatingResponse.table_assignments",
+    )
+
+class FeedbackRequest(BaseModel):
+    verdict: Literal["up", "down"] = Field(..., description="Whether the plan was useful")
+    message: Optional[str] = Field(None, max_length=2000, description="Optional free-text comment")
+    guest_count: Optional[int] = Field(None, ge=0)
+    table_count: Optional[int] = Field(None, ge=0)
+    constraint_count: Optional[int] = Field(None, ge=0)
+
 class ConstraintViolation(BaseModel):
     guest_a: Guest
     guest_b: Guest

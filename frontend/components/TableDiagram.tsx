@@ -13,6 +13,18 @@ interface TableDiagramProps {
   // highlighted, other filled seats are dimmed so the match actually stands
   // out at high seat counts. Null/undefined means no search -- render as normal.
   highlightedSeats?: Set<number> | null;
+  // The seat the user has picked up, mid-swap. Styled distinctly from a search
+  // match: a match is "look here", a selection is "this one is in your hand".
+  selectedSeat?: number | null;
+  // Seats that have just been swapped. Held in a different colour for a few
+  // seconds so the eye can find where the change happened -- two names quietly
+  // changing in a chart of 120 is easy to miss. Deliberately a static colour
+  // change rather than an animation: a pulse on the page for several seconds
+  // reads as an alarm, not a confirmation.
+  flashedSeats?: Set<number> | null;
+  // Rendered as data-table-id, which with each seat's data-seat-index makes
+  // every seat addressable from outside the SVG for tests and debugging.
+  tableId?: string;
 }
 
 type Anchor = "start" | "middle" | "end";
@@ -167,6 +179,9 @@ export default function TableDiagram({
   compact = false,
   onSeatClick,
   highlightedSeats = null,
+  selectedSeat = null,
+  flashedSeats = null,
+  tableId,
 }: TableDiagramProps) {
   const layout =
     type === "banquet"
@@ -176,7 +191,11 @@ export default function TableDiagram({
         : theatreLayout(numSeats, numRows);
 
   return (
-    <svg viewBox={layout.viewBox} className="w-full h-full">
+    <svg
+      data-table-id={tableId ?? undefined}
+      viewBox={layout.viewBox}
+      className="w-full h-full"
+    >
       {layout.table.shape === "rect" && (
         <rect
           x={layout.table.x}
@@ -212,51 +231,120 @@ export default function TableDiagram({
         const searchActive = highlightedSeats != null;
         const isMatch = searchActive && highlightedSeats.has(seat.seatIndex);
         const isDimmed = searchActive && filled && !isMatch;
-        const radius = isMatch ? SEAT_R * 1.3 : SEAT_R;
+        const isSelected = selectedSeat === seat.seatIndex;
+        const isFlashed = flashedSeats?.has(seat.seatIndex) ?? false;
+        const radius = isMatch || isSelected ? SEAT_R * 1.3 : SEAT_R;
         return (
           <g
             key={seat.seatIndex}
+            data-seat-index={onSeatClick ? seat.seatIndex : undefined}
             onClick={onSeatClick ? () => onSeatClick(seat.seatIndex) : undefined}
-            className={onSeatClick ? "cursor-pointer" : undefined}
+            onKeyDown={
+              onSeatClick
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSeatClick(seat.seatIndex);
+                    }
+                  }
+                : undefined
+            }
+            role={onSeatClick ? "button" : undefined}
+            tabIndex={onSeatClick ? 0 : undefined}
+            aria-label={
+              onSeatClick
+                ? `Seat ${seat.seatIndex}${name ? `, ${name}` : ", empty"}`
+                : undefined
+            }
+            // The browser's default focus ring draws as a rectangle around the
+            // whole group -- seat, name and all -- which looked like a stray box
+            // on the chart. focus-visible keeps a ring for keyboard users
+            // without showing one on every mouse click, where the seat lifting
+            // is already the feedback.
+            className={
+              onSeatClick
+                ? `select-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 cursor-pointer`
+                : "select-none"
+            }
           >
-            <circle
-              cx={seat.x}
-              cy={seat.y}
-              r={radius}
-              className={
-                isMatch
-                  ? "fill-amber-500 stroke-amber-600"
-                  : filled
-                    ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
-                    : "fill-white stroke-slate-400"
-              }
-              strokeWidth={isMatch ? 3 : 1.5}
-            />
-            {!compact && (
-              <text
-                x={seat.x}
-                y={seat.y}
-                textAnchor="middle"
-                dominantBaseline="central"
-                className={`${filled ? "fill-white" : "fill-slate-400"} ${isDimmed ? "opacity-25" : ""}`}
-                fontSize={10}
-              >
-                {seat.seatIndex}
-              </text>
+            {onSeatClick && (
+              <circle
+                cx={seat.x}
+                cy={seat.y}
+                r={SEAT_R * 1.7}
+                fill="transparent"
+              />
             )}
-            {!compact && name && (
-              <text
-                x={seat.labelX}
-                y={seat.labelY}
-                textAnchor={seat.anchor}
-                dominantBaseline={seat.baseline}
-                className={`fill-slate-700 ${isDimmed ? "opacity-25" : ""}`}
-                fontSize={isMatch ? 12 : 11}
-                fontWeight={isMatch ? 700 : 500}
-              >
-                {name}
-              </text>
+            {/* The guest a user has picked up is drawn lifted off the table,
+                with the empty chair they came from still showing beneath and a
+                cast shadow between the two. A colour change alone wasn't
+                reading as "held" -- the seat has to look detached. */}
+            {isSelected && (
+              <>
+                <circle
+                  cx={seat.x}
+                  cy={seat.y}
+                  r={SEAT_R}
+                  className="fill-white stroke-amber-400"
+                  strokeDasharray="3 3"
+                  strokeWidth={2}
+                />
+                <ellipse
+                  cx={seat.x}
+                  cy={seat.y + SEAT_R * 0.5}
+                  rx={radius * 0.85}
+                  ry={radius * 0.3}
+                  className="fill-slate-900/25"
+                />
+              </>
             )}
+            <g
+              transform={isSelected ? `translate(0 ${-SEAT_R * 0.85})` : undefined}
+              className={isSelected ? "drop-shadow-lg" : undefined}
+            >
+              <circle
+                cx={seat.x}
+                cy={seat.y}
+                r={radius}
+                className={
+                  isSelected
+                    ? "fill-amber-500 stroke-amber-600"
+                    : isFlashed
+                      ? "fill-emerald-600 stroke-emerald-700"
+                      : isMatch
+                        ? "fill-amber-500 stroke-amber-600"
+                      : filled
+                        ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
+                        : "fill-white stroke-slate-400"
+                }
+                strokeWidth={isMatch || isSelected ? 3 : 1.5}
+              />
+              {!compact && (
+                <text
+                  x={seat.x}
+                  y={seat.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  className={`${filled ? "fill-white" : "fill-slate-400"} ${isDimmed ? "opacity-25" : ""}`}
+                  fontSize={10}
+                >
+                  {seat.seatIndex}
+                </text>
+              )}
+              {!compact && name && (
+                <text
+                  x={seat.labelX}
+                  y={seat.labelY}
+                  textAnchor={seat.anchor}
+                  dominantBaseline={seat.baseline}
+                  className={`${isSelected ? "fill-amber-700" : "fill-slate-700"} ${isDimmed ? "opacity-25" : ""}`}
+                  fontSize={isMatch || isSelected ? 12 : 11}
+                  fontWeight={isMatch || isSelected ? 700 : 500}
+                >
+                  {name}
+                </text>
+              )}
+            </g>
           </g>
         );
       })}

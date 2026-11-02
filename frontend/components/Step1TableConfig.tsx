@@ -63,10 +63,12 @@ export default function Step1TableConfig({
   value,
   onChange,
   onNext,
+  onLoadSample,
 }: {
   value: TableConfig;
   onChange: (next: TableConfig) => void;
   onNext: () => void;
+  onLoadSample: () => void;
 }) {
   const isValid = value.style !== null && value.numTables > 0 && value.numSeatsPerTable > 0;
 
@@ -141,7 +143,14 @@ export default function Step1TableConfig({
         </div>
       )}
 
-      <div className="mt-8 flex justify-end">
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
+        <button
+          type="button"
+          onClick={onLoadSample}
+          className="text-sm font-semibold text-slate-500 hover:text-brand-dark hover:underline"
+        >
+          Or see a finished plan for a sample wedding →
+        </button>
         <button
           type="button"
           disabled={!isValid}

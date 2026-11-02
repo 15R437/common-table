@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Constraint, Guest, SeatingResponse, Table } from "@/lib/types";
-import { ApiError, optimiseSeating, shuffleSeating } from "@/lib/api";
+import { Constraint, Guest, SeatAssignment, SeatingResponse, Table } from "@/lib/types";
+import {
+  ApiError,
+  evaluateSeating,
+  optimiseSeating,
+  sendFeedback,
+  shuffleSeating,
+} from "@/lib/api";
 import TableDiagram from "./TableDiagram";
 
 function seatNamesForTable(result: SeatingResponse, tableId: Table["id"]) {
@@ -39,14 +45,17 @@ function rowGroupsForTheatre(
   table: Extract<Table, { type: "theatre" }>
 ) {
   const seatsPerRow = table.num_seats / table.num_rows;
-  const rows: { rowIndex: number; seats: { colIndex: number; guest: Guest }[] }[] = Array.from(
+  const rows: {
+    rowIndex: number;
+    seats: { colIndex: number; seatIndex: number; guest: Guest }[];
+  }[] = Array.from(
     { length: table.num_rows },
     (_, rowIndex) => ({ rowIndex, seats: [] })
   );
   for (const { seatIndex, guest } of seatRowsForTable(result, table.id)) {
     const rowIndex = Math.floor(seatIndex / seatsPerRow);
     const colIndex = seatIndex % seatsPerRow;
-    rows[rowIndex]?.seats.push({ colIndex, guest });
+    rows[rowIndex]?.seats.push({ colIndex, seatIndex, guest });
   }
   for (const row of rows) row.seats.sort((a, b) => a.colIndex - b.colIndex);
   return rows;
@@ -63,6 +72,57 @@ function matchingSeatsForTable(
     if (matchingGuestIds.has(guest.id)) seats.add(Number(seatIndex));
   }
   return seats;
+}
+
+/** A seat's address. Table ids are compared as strings: once the response has
+ *  crossed JSON, table_assignments is keyed by the string form regardless of
+ *  whether the id was a number on the Python side. */
+interface SeatRef {
+  tableId: string;
+  seatIndex: number;
+}
+
+const sameSeat = (a: SeatRef, b: SeatRef) =>
+  a.tableId === b.tableId && a.seatIndex === b.seatIndex;
+
+/** Exchanges the occupants of two seats, either of which may be empty. */
+function withSeatsSwapped(
+  assignments: SeatingResponse["table_assignments"],
+  a: SeatRef,
+  b: SeatRef
+): SeatingResponse["table_assignments"] {
+  const next: SeatingResponse["table_assignments"] = {};
+  for (const [tableId, seats] of Object.entries(assignments)) {
+    next[tableId] = { ...seats };
+  }
+  next[a.tableId] ??= {};
+  next[b.tableId] ??= {};
+
+  const guestA = next[a.tableId][String(a.seatIndex)];
+  const guestB = next[b.tableId][String(b.seatIndex)];
+
+  // An empty seat has no entry at all rather than a null one, so moving a guest
+  // onto one has to delete the seat they came from.
+  if (guestB) next[a.tableId][String(a.seatIndex)] = guestB;
+  else delete next[a.tableId][String(a.seatIndex)];
+
+  if (guestA) next[b.tableId][String(b.seatIndex)] = guestA;
+  else delete next[b.tableId][String(b.seatIndex)];
+
+  return next;
+}
+
+function toAssignmentPayload(
+  assignments: SeatingResponse["table_assignments"]
+): SeatAssignment {
+  const payload: SeatAssignment = {};
+  for (const [tableId, seats] of Object.entries(assignments)) {
+    payload[tableId] = {};
+    for (const [seatIndex, guest] of Object.entries(seats)) {
+      payload[tableId][Number(seatIndex)] = guest.id;
+    }
+  }
+  return payload;
 }
 
 function csvCell(value: string) {
@@ -169,6 +229,159 @@ function ExportMenu({
   );
 }
 
+/** Asked at the point the plan exists, rather than in the footer: this is the
+ *  one moment the visitor knows whether the tool worked for them. */
+function FeedbackPrompt({
+  guestCount,
+  tableCount,
+  constraintCount,
+}: {
+  guestCount: number;
+  tableCount: number;
+  constraintCount: number;
+}) {
+  const [verdict, setVerdict] = useState<"up" | "down" | null>(null);
+  const [message, setMessage] = useState("");
+  const [sent, setSent] = useState(false);
+
+  async function choose(next: "up" | "down") {
+    setVerdict(next);
+    // Sent straight away, so a verdict still counts even if the comment box is
+    // then ignored -- which it usually will be.
+    await sendFeedback({
+      verdict: next,
+      guest_count: guestCount,
+      table_count: tableCount,
+      constraint_count: constraintCount,
+    });
+  }
+
+  async function submitComment() {
+    if (!verdict) return;
+    await sendFeedback({
+      verdict,
+      message: message.trim(),
+      guest_count: guestCount,
+      table_count: tableCount,
+      constraint_count: constraintCount,
+    });
+    setSent(true);
+  }
+
+  if (sent) {
+    return (
+      <div className="print:hidden mt-10 text-center text-sm text-slate-500">
+        Thank you, that&apos;s genuinely useful.
+      </div>
+    );
+  }
+
+  return (
+    <div className="print:hidden mt-10 pt-6 border-t border-slate-200 text-center">
+      {verdict === null ? (
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <span className="text-sm text-slate-500">Did this give you a usable plan?</span>
+          <button
+            type="button"
+            onClick={() => choose("up")}
+            className="rounded-full border-2 border-slate-200 px-4 py-1.5 text-sm font-semibold text-slate-600 hover:border-brand-dark hover:text-brand-dark transition-colors"
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => choose("down")}
+            className="rounded-full border-2 border-slate-200 px-4 py-1.5 text-sm font-semibold text-slate-600 hover:border-brand-dark hover:text-brand-dark transition-colors"
+          >
+            Not really
+          </button>
+        </div>
+      ) : (
+        <div className="max-w-md mx-auto">
+          <label htmlFor="feedback-message" className="block text-sm text-slate-500 mb-2">
+            {verdict === "up"
+              ? "Thanks! Anything that would have made it easier?"
+              : "Sorry about that. What went wrong?"}
+          </label>
+          <textarea
+            id="feedback-message"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            className="w-full border-2 border-slate-200 rounded-lg p-3 text-sm focus:border-brand-dark outline-none resize-y"
+          />
+          <div className="flex items-center justify-center gap-3 mt-3">
+            <button
+              type="button"
+              onClick={submitComment}
+              disabled={!message.trim()}
+              className="rounded-full bg-brand-dark text-white px-5 py-2 text-sm font-semibold hover:bg-brand-dark/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Send
+            </button>
+            <button
+              type="button"
+              onClick={() => setSent(true)}
+              className="text-sm text-slate-400 hover:text-brand-dark"
+            >
+              No thanks
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One guest in the list view: tap to pick up, tap another to swap. */
+function SeatListRow({
+  seat,
+  position,
+  guest,
+  isMatch,
+  selectedSeat,
+  onActivate,
+  justSwapped,
+}: {
+  seat: SeatRef;
+  position: number;
+  guest: Guest;
+  isMatch: boolean;
+  selectedSeat: SeatRef | null;
+  onActivate: (seat: SeatRef) => void;
+  justSwapped: boolean;
+}) {
+  const isSelected = selectedSeat != null && sameSeat(selectedSeat, seat);
+
+  return (
+    <li
+      onClick={() => onActivate(seat)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onActivate(seat);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected}
+      className={`flex justify-between py-1.5 -mx-2 px-2 rounded cursor-pointer print:cursor-auto transition-colors duration-500 ${
+        isSelected
+          ? "bg-amber-100 ring-2 ring-amber-400"
+          : justSwapped
+            ? "bg-emerald-100"
+            : isMatch
+              ? "bg-brand-light"
+              : "hover:bg-slate-50"
+      }`}
+    >
+      <span className="text-slate-400 w-8">{position}</span>
+      <span className="flex-1">{guest.name}</span>
+    </li>
+  );
+}
+
 export default function Step3Results({
   guests,
   tables,
@@ -187,6 +400,23 @@ export default function Step3Results({
   const [search, setSearch] = useState("");
   const [shuffling, setShuffling] = useState(false);
   const [shuffleError, setShuffleError] = useState<string | null>(null);
+  // The last plan the optimiser produced, kept so hand-edits can be undone
+  // without paying for another solve.
+  const [optimisedResult, setOptimisedResult] = useState<SeatingResponse | null>(null);
+  const [selectedSeat, setSelectedSeat] = useState<SeatRef | null>(null);
+  // The swap just made: drives the confirmation bar and the flash on the two
+  // seats. Names are captured at swap time because the guests have moved by the
+  // time it renders, so reading them back out of the arrangement would describe
+  // the new occupants rather than who was exchanged.
+  const [lastSwap, setLastSwap] = useState<{
+    from: SeatRef;
+    to: SeatRef;
+    movedName: string;
+    /** Null when the guest was moved into a seat that was empty. */
+    displacedName: string | null;
+  } | null>(null);
+  const [edited, setEdited] = useState(false);
+  const [rescoreFailed, setRescoreFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,6 +424,7 @@ export default function Step3Results({
       .then((response) => {
         if (cancelled) return;
         setResult(response);
+        setOptimisedResult(response);
         setStatus("done");
       })
       .catch((e) => {
@@ -213,12 +444,123 @@ export default function Step3Results({
     try {
       const response = await shuffleSeating({ guests, tables, constraints });
       setResult(response);
+      setOptimisedResult(response);
+      setSelectedSeat(null);
+      clearSwapConfirmation();
+      setEdited(false);
+      setRescoreFailed(false);
     } catch (e) {
       setShuffleError(e instanceof ApiError ? e.message : "Something went wrong.");
     } finally {
       setShuffling(false);
     }
   }
+
+  // Tap one seat, then another. Chosen over dragging because tables can sit
+  // hundreds of pixels apart -- the seat being swapped to is usually off screen
+  // when it's chosen, so a drag would have to scroll mid-gesture -- and because
+  // the same gesture then works on a phone and from the keyboard.
+  async function handleSeatActivate(seat: SeatRef) {
+    if (!result) return;
+
+    if (!selectedSeat) {
+      // An empty seat can't start a swap -- there's nobody in it to move.
+      if (!result.table_assignments[seat.tableId]?.[String(seat.seatIndex)]) return;
+      setSelectedSeat(seat);
+      return;
+    }
+    if (sameSeat(selectedSeat, seat)) {
+      setSelectedSeat(null);
+      return;
+    }
+    await applySwap(selectedSeat, seat);
+  }
+
+  async function applySwap(from: SeatRef, to: SeatRef, isUndo = false) {
+    if (!result) return;
+    const movedName = result.table_assignments[from.tableId]?.[String(from.seatIndex)]?.name;
+    const displacedName = result.table_assignments[to.tableId]?.[String(to.seatIndex)]?.name;
+    const swapped = withSeatsSwapped(result.table_assignments, from, to);
+    setSelectedSeat(null);
+    setEdited(true);
+    if (isUndo) {
+      clearSwapConfirmation();
+    } else {
+      showSwapConfirmation({
+        from,
+        to,
+        movedName: movedName ?? "that guest",
+        displacedName: displacedName ?? null,
+      });
+    }
+    // Shown immediately, then re-scored: the seats are the user's to move, so
+    // the chart should never wait on the network to reflect what they just did.
+    setResult({ ...result, table_assignments: swapped });
+
+    try {
+      const rescored = await evaluateSeating({
+        guests,
+        tables,
+        constraints,
+        assignment: toAssignmentPayload(swapped),
+      });
+      setResult(rescored);
+      setRescoreFailed(false);
+    } catch {
+      // The arrangement on screen is still the user's; only the counts are now
+      // out of date, which the banner says explicitly rather than quietly
+      // showing stale numbers as if they were current.
+      setRescoreFailed(true);
+    }
+  }
+
+  const confirmationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
+    },
+    []
+  );
+
+  function showSwapConfirmation(next: NonNullable<typeof lastSwap>) {
+    if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
+    setLastSwap(next);
+    confirmationTimer.current = setTimeout(() => setLastSwap(null), 3000);
+  }
+
+  function clearSwapConfirmation() {
+    if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
+    setLastSwap(null);
+  }
+
+  /** True while a seat should show the "this just changed" flash. */
+  function justSwappedSeat(tableId: string, seatIndex: number) {
+    if (!lastSwap) return false;
+    const seat = { tableId, seatIndex };
+    return sameSeat(lastSwap.from, seat) || sameSeat(lastSwap.to, seat);
+  }
+
+  function flashedSeatsForTable(tableId: string): Set<number> | null {
+    if (!lastSwap) return null;
+    const seats = new Set<number>();
+    if (lastSwap.from.tableId === tableId) seats.add(lastSwap.from.seatIndex);
+    if (lastSwap.to.tableId === tableId) seats.add(lastSwap.to.seatIndex);
+    return seats.size > 0 ? seats : null;
+  }
+
+  function resetToOptimised() {
+    if (!optimisedResult) return;
+    setResult(optimisedResult);
+    setSelectedSeat(null);
+    clearSwapConfirmation();
+    setEdited(false);
+    setRescoreFailed(false);
+  }
+
+  const selectedGuestName =
+    selectedSeat && result
+      ? result.table_assignments[selectedSeat.tableId]?.[String(selectedSeat.seatIndex)]?.name
+      : undefined;
 
   const query = search.trim().toLowerCase();
   const violationCount =
@@ -245,8 +587,9 @@ export default function Step3Results({
         {status === "done" ? "Your seating plan" : "Optimising your seating plan..."}
       </h2>
       {status === "done" && (
-        <p className="print:hidden text-center text-slate-500 mb-8">
-          Now make it your own — have a look through and see if anything needs a personal touch.
+        <p className="print:hidden text-center text-slate-500 mb-6">
+          Now make it your own. Tap a guest, then tap the seat you&apos;d like them to
+          swap with.
         </p>
       )}
 
@@ -265,6 +608,79 @@ export default function Step3Results({
 
       {status === "done" && result && (
         <>
+          {/* One fixed bar, two states, so confirming a swap replaces the
+              pick-up prompt in place rather than adding anything to the page. */}
+          {(selectedSeat || lastSwap) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="print:hidden fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4"
+            >
+              {selectedSeat ? (
+                <div className="flex flex-wrap items-center justify-center gap-3 bg-amber-50 border border-amber-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
+                  <span className="text-amber-800">
+                    <strong>{selectedGuestName}</strong> picked up. Now choose the seat to
+                    swap them with.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSeat(null)}
+                    className="font-semibold text-amber-800 hover:underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                lastSwap && (
+                  <div className="flex flex-wrap items-center justify-center gap-3 bg-emerald-50 border border-emerald-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
+                    <span className="text-emerald-900">
+                      {lastSwap.displacedName ? (
+                        <>
+                          Swapped <strong>{lastSwap.movedName}</strong> and{" "}
+                          <strong>{lastSwap.displacedName}</strong>.
+                        </>
+                      ) : (
+                        <>
+                          Swapped <strong>{lastSwap.movedName}</strong> with an empty seat.
+                        </>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void applySwap(lastSwap.from, lastSwap.to, true)}
+                      className="font-semibold text-emerald-900 hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
+          {/* Height is reserved whether or not there is anything to say, so the
+              chart below doesn't jump the first time a message appears. */}
+          <div className="print:hidden mb-4 min-h-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm text-slate-500">
+            {edited && (
+              <>
+                <span>You&apos;ve edited this plan by hand.</span>
+                <button
+                  type="button"
+                  onClick={resetToOptimised}
+                  className="font-semibold text-brand-dark hover:underline"
+                >
+                  Reset to the optimised plan
+                </button>
+              </>
+            )}
+            {rescoreFailed && (
+              <span className="text-amber-700">
+                Your change is saved on screen, but the counts couldn&apos;t be rechecked just
+                now.
+              </span>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-4 justify-center mb-6 text-sm">
             <span className="bg-slate-50 rounded-lg px-3 py-2">
               Must sit together: {result.must_sit_together.satisfied}/
@@ -279,29 +695,6 @@ export default function Step3Results({
               {result.must_sit_apart.total}
             </span>
           </div>
-
-          {violationCount > 0 && (
-            <div className="mb-8 text-sm text-amber-700 bg-amber-50 rounded-lg p-4 max-w-2xl mx-auto">
-              <p className="font-semibold mb-2">
-                {violationCount} &quot;must&quot; constraint{violationCount === 1 ? "" : "s"} couldn&apos;t be
-                satisfied:
-              </p>
-              <ul className="list-disc list-inside space-y-1 max-h-48 overflow-y-auto">
-                {result.must_sit_together_violations.map((v, i) => (
-                  <li key={`together-${i}`}>
-                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
-                    sit together, but don&apos;t.
-                  </li>
-                ))}
-                {result.must_sit_apart_violations.map((v, i) => (
-                  <li key={`apart-${i}`}>
-                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
-                    sit apart, but are {sharedSeatingUnit}.
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
 
           <div className="print:hidden flex flex-wrap gap-3 items-center justify-between mb-6">
             <div className="inline-flex rounded-full border border-slate-200 p-1 bg-white">
@@ -368,11 +761,21 @@ export default function Step3Results({
                       numRows={table.type === "theatre" ? table.num_rows : undefined}
                       headSeat={table.type === "banquet" ? table.head_seat : undefined}
                       footSeat={table.type === "banquet" ? table.foot_seat : undefined}
+                      tableId={String(table.id)}
                       seatNames={seatNamesForTable(result, table.id)}
                       highlightedSeats={
                         matchingGuestIds
                           ? matchingSeatsForTable(result, table.id, matchingGuestIds)
                           : null
+                      }
+                      selectedSeat={
+                        selectedSeat?.tableId === String(table.id)
+                          ? selectedSeat.seatIndex
+                          : null
+                      }
+                      flashedSeats={flashedSeatsForTable(String(table.id))}
+                      onSeatClick={(seatIndex) =>
+                        handleSeatActivate({ tableId: String(table.id), seatIndex })
                       }
                     />
                   </div>
@@ -405,18 +808,17 @@ export default function Step3Results({
                               Row {row.rowIndex + 1}
                             </p>
                             <ul className="text-sm divide-y divide-slate-100">
-                              {row.seats.map(({ colIndex, guest }) => (
-                                <li
+                              {row.seats.map(({ colIndex, seatIndex, guest }) => (
+                                <SeatListRow
                                   key={colIndex}
-                                  className={`flex justify-between py-1.5 ${
-                                    matchingGuestIds?.has(guest.id)
-                                      ? "bg-brand-light -mx-2 px-2 rounded"
-                                      : ""
-                                  }`}
-                                >
-                                  <span className="text-slate-400 w-8">{colIndex + 1}</span>
-                                  <span className="flex-1">{guest.name}</span>
-                                </li>
+                                  seat={{ tableId: String(table.id), seatIndex }}
+                                  position={colIndex + 1}
+                                  guest={guest}
+                                  isMatch={matchingGuestIds?.has(guest.id) ?? false}
+                                  selectedSeat={selectedSeat}
+                                  onActivate={handleSeatActivate}
+                                  justSwapped={justSwappedSeat(String(table.id), seatIndex)}
+                                />
                               ))}
                             </ul>
                           </div>
@@ -438,15 +840,16 @@ export default function Step3Results({
                     <h3 className="text-sm font-bold text-slate-500 mb-3">{tableLabel(table)}</h3>
                     <ul className="text-sm divide-y divide-slate-100">
                       {rows.map(({ seatIndex, guest }) => (
-                        <li
+                        <SeatListRow
                           key={seatIndex}
-                          className={`flex justify-between py-1.5 ${
-                            matchingGuestIds?.has(guest.id) ? "bg-brand-light -mx-2 px-2 rounded" : ""
-                          }`}
-                        >
-                          <span className="text-slate-400 w-8">{seatIndex}</span>
-                          <span className="flex-1">{guest.name}</span>
-                        </li>
+                          seat={{ tableId: String(table.id), seatIndex }}
+                          position={seatIndex}
+                          guest={guest}
+                          isMatch={matchingGuestIds?.has(guest.id) ?? false}
+                          selectedSeat={selectedSeat}
+                          onActivate={handleSeatActivate}
+                          justSwapped={justSwappedSeat(String(table.id), seatIndex)}
+                        />
                       ))}
                     </ul>
                   </div>
@@ -455,6 +858,39 @@ export default function Step3Results({
             </div>
           )}
         </>
+      )}
+
+      {status === "done" && result && violationCount > 0 && (
+        <div className="print:hidden">
+            <div className="mt-8 text-sm text-amber-700 bg-amber-50 rounded-lg p-4 max-w-2xl mx-auto">
+              <p className="font-semibold mb-2">
+                {violationCount} &quot;must&quot; constraint{violationCount === 1 ? "" : "s"} couldn&apos;t be
+                satisfied:
+              </p>
+              <ul className="list-disc list-inside space-y-1 max-h-48 overflow-y-auto">
+                {result.must_sit_together_violations.map((v, i) => (
+                  <li key={`together-${i}`}>
+                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
+                    sit together, but don&apos;t.
+                  </li>
+                ))}
+                {result.must_sit_apart_violations.map((v, i) => (
+                  <li key={`apart-${i}`}>
+                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
+                    sit apart, but are {sharedSeatingUnit}.
+                  </li>
+                ))}
+              </ul>
+            </div>
+        </div>
+      )}
+
+      {status === "done" && result && (
+        <FeedbackPrompt
+          guestCount={guests.length}
+          tableCount={tables.length}
+          constraintCount={constraints.length}
+        />
       )}
 
       <div className="print:hidden mt-8 flex justify-start">

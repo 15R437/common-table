@@ -74,3 +74,18 @@ export interface SeatingResponse {
   must_sit_together_violations: ConstraintViolation[];
   must_sit_apart_violations: ConstraintViolation[];
 }
+
+/** table id -> seat index -> guest id, mirroring SeatingResponse.table_assignments. */
+export type SeatAssignment = Record<string, Record<number, GuestId>>;
+
+export interface EvaluateRequest extends SeatingRequest {
+  assignment: SeatAssignment;
+}
+
+export interface FeedbackRequest {
+  verdict: "up" | "down";
+  message?: string;
+  guest_count?: number;
+  table_count?: number;
+  constraint_count?: number;
+}

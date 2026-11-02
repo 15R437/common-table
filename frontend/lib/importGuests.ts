@@ -220,13 +220,25 @@ const LAST_NAME_CANDIDATES = ["last name", "last", "surname", "family name", "la
 // -- unique per guest, and so useless as a shared tag.
 const GROUP_CANDIDATES = [
   "tags", "tag", "group", "guest group", "side", "category", "circle",
-  "connection", "how we know them", "how you know them", "relation", "relationship",
+  "connection", "how we know them", "how you know them",
+  // Not every event is a wedding: a conference or company dinner groups people
+  // by where they work or what they work on. Listed here rather than under
+  // households because a column like "Team" or "Company" could be read either
+  // way, and reading it as a group only nudges the score, where reading it as a
+  // household would impose a hard must_sit_together.
+  "department", "team", "company", "organisation", "organization",
+  "affiliation", "institution", "school", "faculty", "track", "topic",
+  "relation", "relationship",
 ];
 const PARTY_CANDIDATES = [
   "party", "household", "party name", "invite", "invitation", "family",
   "party id", "group name", "invite group", "booking",
 ];
-const RSVP_CANDIDATES = ["rsvp", "rsvp status", "attending", "status", "response", "coming", "reply"];
+const RSVP_CANDIDATES = [
+  "rsvp", "rsvp status", "attending", "status", "response", "coming", "reply",
+  // An event that isn't a wedding asks people to register rather than to RSVP.
+  "registered", "registration", "confirmed", "booked",
+];
 
 function bestMatch(headers: string[], candidates: string[], exclude: number[] = []): number | null {
   const normalised = headers.map(normalise);
@@ -247,7 +259,7 @@ function bestMatch(headers: string[], candidates: string[], exclude: number[] = 
 
 const ATTENDING_VALUES = new Set([
   "yes", "y", "attending", "accepted", "coming", "confirmed", "true", "1",
-  "rsvp yes", "will attend", "accept",
+  "rsvp yes", "will attend", "accept", "registered", "paid", "going",
 ]);
 
 export function readsAsAttending(value: string): boolean {
@@ -350,8 +362,11 @@ export function buildGuestList(
     rows = rows.filter((row) => readsAsAttending(cell(row, mapping.rsvpColumn)));
     const excluded = before - rows.length;
     if (excluded > 0) {
+      // Names the column rather than saying "RSVP": at a conference or a company
+      // dinner the column is called something like Registered, and the note has
+      // to describe the sheet in front of the user.
       notes.push(
-        `${excluded} ${excluded === 1 ? "guest" : "guests"} left out because their RSVP isn't a yes.`
+        `${excluded} ${excluded === 1 ? "guest" : "guests"} left out because their "${table.headers[mapping.rsvpColumn]}" isn't a yes.`
       );
     }
   }
@@ -481,8 +496,8 @@ export function buildGuestList(
     if (groupedHouseholds > 0) {
       notes.push(
         groupedHouseholds === 1
-          ? `1 larger household from the "${columnName}" column became a social group, so they're seated near each other without taking up a rule of their own.`
-          : `${groupedHouseholds} larger households from the "${columnName}" column became social groups, so they're seated near each other without taking up a rule of their own.`
+          ? `1 larger household from the "${columnName}" column became a group, so they're seated near each other without taking up a rule of their own.`
+          : `${groupedHouseholds} larger households from the "${columnName}" column became groups, so they're seated near each other without taking up a rule of their own.`
       );
     }
   }

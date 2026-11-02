@@ -302,8 +302,8 @@ export default function GuestImporter({
               </>
             )}
             <ColumnSelect
-              label="Social group"
-              hint="Which group each guest belongs to"
+              label="Group"
+              hint="e.g. family, work, university, interests"
               headers={headers}
               value={staged.mapping.groupColumn}
               onChange={(next) => updateMapping({ groupColumn: next })}
@@ -333,7 +333,8 @@ export default function GuestImporter({
                 onChange={(e) => updateMapping({ onlyAttending: e.target.checked })}
                 className="w-4 h-4 accent-brand-dark"
               />
-              Only include guests whose RSVP is a yes
+              Only include guests whose &quot;{headers[staged.mapping.rsvpColumn]}&quot; is a
+              yes
             </label>
           )}
 
@@ -348,7 +349,7 @@ export default function GuestImporter({
                   <thead className="bg-slate-50 text-left">
                     <tr>
                       <th className="px-3 py-2 font-semibold text-slate-500">Guest</th>
-                      <th className="px-3 py-2 font-semibold text-slate-500">Social groups</th>
+                      <th className="px-3 py-2 font-semibold text-slate-500">Groups</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

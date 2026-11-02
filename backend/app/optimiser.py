@@ -1,5 +1,5 @@
 import numpy as np
-from .schema import SeatingRequest, SeatingResponse, ConstraintViolation, CabaretTable, BanquetTable, TheatreSection
+from .schema import SeatingRequest, SeatingResponse, EvaluateRequest, ConstraintViolation, CabaretTable, BanquetTable, TheatreSection
 from .solvers import GradSolver, LocalSearchSolver
 
 NUM_EPOCHS = 1000
@@ -196,7 +196,7 @@ def solve(request: SeatingRequest, shuffle: bool = False) -> SeatingResponse:
 
     if len(guest_list) > total_seats:
         raise ValueError(
-            f"{len(guest_list)} guests but only {total_seats} seats available across all tables."
+            f"{len(guest_list)} guests but only {total_seats} seats available in total."
         )
 
     # Cabaret always wins with gradsolver+ls (no losing case found, including
@@ -233,6 +233,10 @@ def solve(request: SeatingRequest, shuffle: bool = False) -> SeatingResponse:
         guest = guest_list[guest_idx]
         table_assignments[target_table_id][local_seat_idx] = guest
 
+    return _build_response(result, table_assignments, guest_list)
+
+
+def _build_response(result, table_assignments, guest_list) -> SeatingResponse:
     def to_violations(index_pairs):
         return [
             ConstraintViolation(guest_a=guest_list[a], guest_b=guest_list[b])
@@ -247,3 +251,92 @@ def solve(request: SeatingRequest, shuffle: bool = False) -> SeatingResponse:
                            must_sit_apart=result['must_sit_apart'],
                            must_sit_together_violations=to_violations(result['must_sit_together_violations']),
                            must_sit_apart_violations=to_violations(result['must_sit_apart_violations']))
+
+
+def evaluate(request: EvaluateRequest) -> SeatingResponse:
+    """Re-score a hand-edited arrangement without re-optimising it.
+
+    Guests keep the seats the user put them in; only the scores and violation
+    lists are recomputed, by the same solver code that scores an optimiser run.
+    """
+    guest_list = request.guests
+    table_list = request.tables
+
+    total_seats = sum(table.num_seats for table in table_list)
+    if len(guest_list) > total_seats:
+        raise ValueError(
+            f"{len(guest_list)} guests but only {total_seats} seats available in total."
+        )
+
+    guest_index_by_id = {guest.id: index for index, guest in enumerate(guest_list)}
+    table_index_by_id = {table.id: index for index, table in enumerate(table_list)}
+
+    # Global seat indices are laid out table after table, matching how solve()
+    # splits them back apart via the cumulative capacities.
+    table_capacity = [table.num_seats for table in table_list]
+    table_cumulative_capacity = np.cumsum(table_capacity)
+    table_start_seat = [0, *table_cumulative_capacity[:-1].tolist()]
+
+    guest_to_seat = np.full(len(guest_list), -1, dtype=int)
+    seen_seats = set()
+
+    for raw_table_id, seats in request.assignment.items():
+        table_index = table_index_by_id.get(raw_table_id)
+        # JSON object keys are always strings, so a table or guest id that is an
+        # int on the Python side arrives as its string form.
+        if table_index is None:
+            table_index = table_index_by_id.get(str(raw_table_id))
+        if table_index is None:
+            try:
+                table_index = table_index_by_id.get(int(raw_table_id))
+            except (TypeError, ValueError):
+                table_index = None
+        if table_index is None:
+            raise ValueError(f"Unknown table id {raw_table_id!r} in assignment.")
+
+        for seat_index, guest_id in seats.items():
+            if not 0 <= seat_index < table_capacity[table_index]:
+                raise ValueError(
+                    f"Seat {seat_index} is out of range for table {raw_table_id!r}."
+                )
+
+            guest_index = guest_index_by_id.get(guest_id)
+            if guest_index is None:
+                guest_index = guest_index_by_id.get(str(guest_id))
+            if guest_index is None:
+                try:
+                    guest_index = guest_index_by_id.get(int(guest_id))
+                except (TypeError, ValueError):
+                    guest_index = None
+            if guest_index is None:
+                raise ValueError(f"Unknown guest id {guest_id!r} in assignment.")
+
+            global_seat = table_start_seat[table_index] + seat_index
+            if global_seat in seen_seats:
+                raise ValueError(f"Seat {seat_index} of table {raw_table_id!r} is assigned twice.")
+            seen_seats.add(global_seat)
+
+            if guest_to_seat[guest_index] != -1:
+                raise ValueError(
+                    f"Guest {guest_list[guest_index].name!r} is assigned to more than one seat."
+                )
+            guest_to_seat[guest_index] = global_seat
+
+    unseated = np.flatnonzero(guest_to_seat == -1)
+    if unseated.size:
+        names = ", ".join(guest_list[i].name for i in unseated[:5])
+        raise ValueError(f"These guests have no seat: {names}.")
+
+    # LocalSearchSolver is used purely as a scorer here -- constructing it builds
+    # the relation, constraint and adjacency matrices, and _summarize_assignment
+    # reads the arrangement off them without any search running.
+    scorer = LocalSearchSolver(guest_list, table_list, request.constraints)
+    result = scorer._summarize_assignment(guest_to_seat)
+
+    table_assignments = {table.id: {} for table in table_list}
+    for guest_index, global_seat_idx in result['assignment'].items():
+        table_idx = int(np.searchsorted(table_cumulative_capacity, global_seat_idx, side='right'))
+        local_seat_idx = int(global_seat_idx - table_start_seat[table_idx])
+        table_assignments[table_list[table_idx].id][local_seat_idx] = guest_list[guest_index]
+
+    return _build_response(result, table_assignments, guest_list)

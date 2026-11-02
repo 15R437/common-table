@@ -13,6 +13,9 @@ interface TableDiagramProps {
   // highlighted, other filled seats are dimmed so the match actually stands
   // out at high seat counts. Null/undefined means no search -- render as normal.
   highlightedSeats?: Set<number> | null;
+  // The seat the user has picked up, mid-swap. Styled distinctly from a search
+  // match: a match is "look here", a selection is "this one is in your hand".
+  selectedSeat?: number | null;
 }
 
 type Anchor = "start" | "middle" | "end";
@@ -167,6 +170,7 @@ export default function TableDiagram({
   compact = false,
   onSeatClick,
   highlightedSeats = null,
+  selectedSeat = null,
 }: TableDiagramProps) {
   const layout =
     type === "banquet"
@@ -212,11 +216,29 @@ export default function TableDiagram({
         const searchActive = highlightedSeats != null;
         const isMatch = searchActive && highlightedSeats.has(seat.seatIndex);
         const isDimmed = searchActive && filled && !isMatch;
-        const radius = isMatch ? SEAT_R * 1.3 : SEAT_R;
+        const isSelected = selectedSeat === seat.seatIndex;
+        const radius = isMatch || isSelected ? SEAT_R * 1.3 : SEAT_R;
         return (
           <g
             key={seat.seatIndex}
             onClick={onSeatClick ? () => onSeatClick(seat.seatIndex) : undefined}
+            onKeyDown={
+              onSeatClick
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSeatClick(seat.seatIndex);
+                    }
+                  }
+                : undefined
+            }
+            role={onSeatClick ? "button" : undefined}
+            tabIndex={onSeatClick ? 0 : undefined}
+            aria-label={
+              onSeatClick
+                ? `Seat ${seat.seatIndex}${name ? `, ${name}` : ", empty"}`
+                : undefined
+            }
             className={onSeatClick ? "cursor-pointer" : undefined}
           >
             <circle
@@ -224,13 +246,15 @@ export default function TableDiagram({
               cy={seat.y}
               r={radius}
               className={
-                isMatch
-                  ? "fill-amber-500 stroke-amber-600"
-                  : filled
-                    ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
-                    : "fill-white stroke-slate-400"
+                isSelected
+                  ? "fill-brand-dark stroke-amber-500"
+                  : isMatch
+                    ? "fill-amber-500 stroke-amber-600"
+                    : filled
+                      ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
+                      : "fill-white stroke-slate-400"
               }
-              strokeWidth={isMatch ? 3 : 1.5}
+              strokeWidth={isMatch || isSelected ? 3 : 1.5}
             />
             {!compact && (
               <text

@@ -9,10 +9,14 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from app.schema import SeatingRequest, SeatingResponse
+import logging
+
+from app.schema import SeatingRequest, SeatingResponse, EvaluateRequest, FeedbackRequest
 from app import optimiser
 
 app = FastAPI()
+
+logger = logging.getLogger("commontable")
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -61,3 +65,33 @@ def shuffle_layout(request: Request, payload: SeatingRequest):
         return optimiser.solve(payload, shuffle=True)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# Scoring an arrangement runs no search, so it is far cheaper than /optimise and
+# is called once per hand-edit -- a tighter limit here would break dragging
+# guests around, which is the whole point of the endpoint.
+@app.post("/api/v1/evaluate", response_model=SeatingResponse)
+@limiter.limit("120/minute")
+def evaluate_layout(request: Request, payload: EvaluateRequest):
+    try:
+        return optimiser.evaluate(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/feedback")
+@limiter.limit("5/minute")
+def submit_feedback(request: Request, payload: FeedbackRequest):
+    # Written to the application log rather than a database: there is no store
+    # to put it in yet, and losing the ability to collect any feedback at all
+    # while one is chosen is the worse trade. Swap this line for a write to a
+    # table or a form service when somewhere durable exists.
+    logger.warning(
+        "FEEDBACK verdict=%s guests=%s tables=%s constraints=%s message=%r",
+        payload.verdict,
+        payload.guest_count,
+        payload.table_count,
+        payload.constraint_count,
+        (payload.message or "").strip(),
+    )
+    return {"status": "received"}

@@ -1,4 +1,4 @@
-import { SeatingRequest, SeatingResponse } from "./types";
+import { EvaluateRequest, FeedbackRequest, SeatingRequest, SeatingResponse } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -33,4 +33,28 @@ export function optimiseSeating(request: SeatingRequest): Promise<SeatingRespons
 // server's separate shuffle endpoint to produce anything different at all.
 export function shuffleSeating(request: SeatingRequest): Promise<SeatingResponse> {
   return postSeatingRequest("/api/v1/optimise/shuffle", request);
+}
+
+/**
+ * Re-scores an arrangement the user edited by hand, leaving the seating exactly
+ * as they left it. The constraint counts can't be recomputed in the browser --
+ * must_sit_together depends on each table type's seat adjacency, which lives in
+ * the backend -- so the edited plan is scored by the same code that produced it.
+ */
+export function evaluateSeating(request: EvaluateRequest): Promise<SeatingResponse> {
+  return postSeatingRequest("/api/v1/evaluate", request as SeatingRequest);
+}
+
+/** Fire-and-forget: a failed send must never block or interrupt the user. */
+export async function sendFeedback(feedback: FeedbackRequest): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(feedback),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

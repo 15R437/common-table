@@ -257,6 +257,61 @@ function bestMatch(headers: string[], candidates: string[], exclude: number[] = 
   return null;
 }
 
+// A keep-together column is validated by the shape of its values, not just its
+// name. "Party size" matches the word "party" but holds a headcount, and
+// reading it as households seats whoever happens to share a number next to each
+// other -- on a test list it produced a hard must_sit_together between two
+// strangers who were both party-of-one. Three of the four widely-recommended
+// wedding templates ship a "Party size" column, so this is the common case,
+// not an edge one.
+//
+// The two checks catch different things and neither covers the other:
+//
+//  - looksLikeACount catches a small set of low integers, which is a headcount
+//    whatever the list's length. Cluster shape can't catch this on a short
+//    list, where a real household and a party-of-four look identical.
+//  - clustersLikeHouseholds catches columns whose values group too many people
+//    to be a household, such as Side or Tier, and columns where nothing repeats
+//    at all. Those pass the count check because they aren't numbers.
+//
+// Deliberately restricted to a column chosen by guessing. A column the user
+// picked themselves is respected as given.
+
+/** Values that are a handful of small integers: a headcount, not an identifier. */
+function looksLikeACount(values: string[]): boolean {
+  if (values.length === 0) return false;
+  const everyValueIsASmallInteger = values.every((v) => /^\d{1,2}$/.test(v) && Number(v) >= 1 && Number(v) <= 20);
+  if (!everyValueIsASmallInteger) return false;
+  // A household column keyed by number would run to one value per household, so
+  // a handful of distinct values is what separates a count from an identifier.
+  return new Set(values).size <= 6;
+}
+
+/** No household holds 11 people, or a quarter of the guest list. */
+const MAX_PLAUSIBLE_HOUSEHOLD = 10;
+const MAX_SHARE_OF_LIST = 0.25;
+// Below this the share test is meaningless: on an eight-row list a single
+// household of three is already more than a quarter of it.
+const MIN_ROWS_FOR_SHARE_TEST = 12;
+
+function clustersLikeHouseholds(values: string[]): boolean {
+  if (values.length === 0) return false;
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const key = value.toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const largest = Math.max(...counts.values());
+  // Nothing repeats, so there are no households in it to find. This is what a
+  // booking reference looks like, and also a sheet with one row per household.
+  if (largest < 2) return false;
+  if (largest > MAX_PLAUSIBLE_HOUSEHOLD) return false;
+  if (values.length >= MIN_ROWS_FOR_SHARE_TEST && largest > values.length * MAX_SHARE_OF_LIST) {
+    return false;
+  }
+  return true;
+}
+
 const ATTENDING_VALUES = new Set([
   "yes", "y", "attending", "accepted", "coming", "confirmed", "true", "1",
   "rsvp yes", "will attend", "accept", "registered", "paid", "going",
@@ -284,11 +339,20 @@ export function guessMapping(table: DetectedTable): ColumnMapping {
   // from the single column; keeping both would join the name to itself.
   const useSingleName = nameColumn !== null;
 
-  const partyColumn = bestMatch(
+  let partyColumn = bestMatch(
     headers,
     PARTY_CANDIDATES,
     [nameColumn, firstNameColumn, lastNameColumn].filter((i): i is number => i !== null)
   );
+
+  if (partyColumn !== null) {
+    const values = rows
+      .map((row) => (row[partyColumn as number] ?? "").trim())
+      .filter(Boolean);
+    if (looksLikeACount(values) || !clustersLikeHouseholds(values)) {
+      partyColumn = null;
+    }
+  }
   // A column already doing duty as the household must not double as the group
   // tag: it would tag every household uniquely, giving every guest a tag shared
   // with nobody outside their own party and no signal for the optimiser.

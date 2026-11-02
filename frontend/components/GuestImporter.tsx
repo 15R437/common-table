@@ -303,7 +303,7 @@ export default function GuestImporter({
             )}
             <ColumnSelect
               label="Social group"
-              hint="Which set each guest belongs to, often a Side, Group or Category column"
+              hint="Which group each guest belongs to"
               headers={headers}
               value={staged.mapping.groupColumn}
               onChange={(next) => updateMapping({ groupColumn: next })}

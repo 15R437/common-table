@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Table } from "@/lib/types";
 import StepProgress from "@/components/StepProgress";
 import Step1TableConfig, { TableConfig } from "@/components/Step1TableConfig";
@@ -55,11 +56,42 @@ const EMPTY_CONFIG: TableConfig = {
   footSeat: false,
 };
 
-export default function Home() {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+// The step lives in the URL rather than in component state. With it in state,
+// the whole planner was a single route: clicking the logo while on the results
+// page was a no-op (same URL, so no remount), and the browser's Back button
+// left the site entirely instead of going back a step. A search param gives
+// each step its own history entry, which fixes both without the nav in
+// app/layout.tsx needing to know the planner exists.
+type Step = 1 | 2 | 3;
+
+const STEP_PARAM = "step";
+
+function stepHref(step: Step) {
+  return step === 1 ? "/" : `/?${STEP_PARAM}=${step}`;
+}
+
+function Planner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [tableConfig, setTableConfig] = useState<TableConfig>(EMPTY_CONFIG);
   const [guestData, setGuestData] = useState<GuestData>({ guests: [], constraints: [] });
   const [dismissedResume, setDismissedResume] = useState(false);
+
+  const requestedStep = Number(searchParams.get(STEP_PARAM));
+  // Clamped against what each step actually needs, so a reloaded or shared
+  // /?step=3 link can't land someone on an empty results page. Step 2 needs
+  // only a seating style -- it is where the guest list gets entered, so
+  // requiring guests to reach it would make it unreachable.
+  const canEnterStep2 = tableConfig.style !== null;
+  const canEnterStep3 = canEnterStep2 && guestData.guests.length > 0;
+  const step: Step =
+    requestedStep === 3 && canEnterStep3
+      ? 3
+      : requestedStep === 2 && canEnterStep2
+        ? 2
+        : 1;
+
+  const setStep = (next: Step) => router.push(stepHref(next));
 
   // The saved draft is read as an external store rather than copied into state
   // on mount. Copying it in an effect would mean a setState during the first
@@ -92,7 +124,7 @@ export default function Home() {
     if (!savedDraft) return;
     setTableConfig({ ...EMPTY_CONFIG, ...savedDraft.tableConfig });
     setGuestData(savedDraft.guestData);
-    setStep(2);
+    router.push(stepHref(2));
   }
 
   function startFresh() {
@@ -100,7 +132,7 @@ export default function Home() {
     setDismissedResume(true);
     setTableConfig(EMPTY_CONFIG);
     setGuestData({ guests: [], constraints: [] });
-    setStep(1);
+    router.push(stepHref(1));
   }
 
   function loadSample() {
@@ -108,7 +140,7 @@ export default function Home() {
     setTableConfig(SAMPLE_TABLE_CONFIG);
     setGuestData({ guests, constraints });
     setDismissedResume(true);
-    setStep(3);
+    router.push(stepHref(3));
   }
 
   const tables = buildTables(tableConfig);
@@ -184,5 +216,17 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense
+      fallback={
+        <main className="max-w-4xl mx-auto mt-12 mb-24 p-4 sm:p-8 bg-nav rounded-3xl shadow-brand-glow w-full" />
+      }
+    >
+      <Planner />
+    </Suspense>
   );
 }

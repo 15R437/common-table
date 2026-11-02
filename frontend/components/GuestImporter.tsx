@@ -302,15 +302,15 @@ export default function GuestImporter({
               </>
             )}
             <ColumnSelect
-              label="Group"
-              hint="Who sits with whom — e.g. side, category, tags"
+              label="Social group"
+              hint="Which set each guest belongs to — often a Side, Group or Category column"
               headers={headers}
               value={staged.mapping.groupColumn}
               onChange={(next) => updateMapping({ groupColumn: next })}
             />
             <ColumnSelect
               label="Household"
-              hint="Couples and families kept together"
+              hint="Couples seated together, families kept near each other"
               headers={headers}
               value={staged.mapping.partyColumn}
               onChange={(next) => updateMapping({ partyColumn: next })}
@@ -348,7 +348,7 @@ export default function GuestImporter({
                   <thead className="bg-slate-50 text-left">
                     <tr>
                       <th className="px-3 py-2 font-semibold text-slate-500">Guest</th>
-                      <th className="px-3 py-2 font-semibold text-slate-500">Groups</th>
+                      <th className="px-3 py-2 font-semibold text-slate-500">Social groups</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

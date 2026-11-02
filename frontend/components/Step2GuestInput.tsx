@@ -262,7 +262,7 @@ export default function Step2GuestInput({
                     updateGuest(guest.id, { relation_tags: splitTags(e.target.value) });
                   }}
                   list="known-tags"
-                  placeholder="Groups, e.g. uni friends"
+                  placeholder="Social groups, e.g. uni friends"
                   className="border-2 border-slate-200 rounded-lg p-2 flex-1 min-w-0 focus:border-brand-dark outline-none"
                 />
                 <button
@@ -294,7 +294,8 @@ export default function Step2GuestInput({
       <div className="p-6 sm:p-8 bg-white rounded-2xl shadow-brand-glow border border-slate-100 mb-8">
         <h3 className="text-lg font-bold text-brand-dark mb-1">Who sits with whom</h3>
         <p className="text-sm text-slate-500 mb-4">
-          Optional — couples, and anyone best kept apart.
+          Optional — things the social groups don&apos;t capture: who you know gets on,
+          and who is best kept apart.
           {value.constraints.length > 0 && ` ${value.constraints.length} so far.`}
         </p>
         <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:items-center mb-2">

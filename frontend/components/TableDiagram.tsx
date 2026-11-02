@@ -16,6 +16,9 @@ interface TableDiagramProps {
   // The seat the user has picked up, mid-swap. Styled distinctly from a search
   // match: a match is "look here", a selection is "this one is in your hand".
   selectedSeat?: number | null;
+  // Stamped onto the rendered SVG as data-table-id so a pointer landing
+  // anywhere inside it can be traced back to this table (see Step3Results).
+  tableId?: string;
 }
 
 type Anchor = "start" | "middle" | "end";
@@ -171,6 +174,7 @@ export default function TableDiagram({
   onSeatClick,
   highlightedSeats = null,
   selectedSeat = null,
+  tableId,
 }: TableDiagramProps) {
   const layout =
     type === "banquet"
@@ -180,7 +184,11 @@ export default function TableDiagram({
         : theatreLayout(numSeats, numRows);
 
   return (
-    <svg viewBox={layout.viewBox} className="w-full h-full">
+    <svg
+      data-table-id={tableId ?? undefined}
+      viewBox={layout.viewBox}
+      className="w-full h-full"
+    >
       {layout.table.shape === "rect" && (
         <rect
           x={layout.table.x}
@@ -221,6 +229,8 @@ export default function TableDiagram({
         return (
           <g
             key={seat.seatIndex}
+            data-seat-index={onSeatClick ? seat.seatIndex : undefined}
+            data-seat-filled={onSeatClick && filled ? "true" : undefined}
             onClick={onSeatClick ? () => onSeatClick(seat.seatIndex) : undefined}
             onKeyDown={
               onSeatClick
@@ -239,7 +249,7 @@ export default function TableDiagram({
                 ? `Seat ${seat.seatIndex}${name ? `, ${name}` : ", empty"}`
                 : undefined
             }
-            className={onSeatClick ? "cursor-pointer" : undefined}
+            className={onSeatClick ? "cursor-grab" : undefined}
           >
             <circle
               cx={seat.x}

@@ -462,6 +462,7 @@ export default function Step3Results({
   // laptop, and HTML5 drag events don't fire on touch at all.
   async function handleSeatActivate(seat: SeatRef) {
     if (!result) return;
+    if (suppressNextClick.current) return;
 
     if (!selectedSeat) {
       // An empty seat can't start a swap -- there's nobody in it to move.
@@ -500,6 +501,52 @@ export default function Step3Results({
       // showing stale numbers as if they were current.
       setRescoreFailed(true);
     }
+  }
+
+  // Dragging in the chart is handled here rather than per-seat, because one
+  // handler on the grid can resolve any seat in any table from the data
+  // attributes TableDiagram stamps on. HTML5 drag-and-drop isn't used: it is
+  // unreliable on SVG and never fires on touch at all.
+  const dragFrom = useRef<SeatRef | null>(null);
+  // A drag ends in a click event too. Without this the swap would be followed
+  // by the tap handler picking the dropped-on seat straight back up.
+  const suppressNextClick = useRef(false);
+
+  function seatRefFromPoint(x: number, y: number): SeatRef | null {
+    const element = document.elementFromPoint(x, y);
+    const seat = element?.closest<HTMLElement>("[data-seat-index]");
+    const table = element?.closest<HTMLElement>("[data-table-id]");
+    if (!seat || !table) return null;
+    const tableId = table.dataset.tableId;
+    const seatIndex = Number(seat.dataset.seatIndex);
+    if (tableId === undefined || Number.isNaN(seatIndex)) return null;
+    return { tableId, seatIndex };
+  }
+
+  function handleChartPointerDown(e: React.PointerEvent) {
+    // Cleared at the start of every interaction rather than when the suppressed
+    // click arrives, because a drag between two different elements fires no
+    // click at all -- the flag would otherwise survive and swallow the next
+    // genuine tap instead.
+    suppressNextClick.current = false;
+    // Mouse only. On touch, starting a drag would have to cancel page
+    // scrolling to work, and tapping two seats already does the job there.
+    if (e.pointerType !== "mouse") return;
+    const target = (e.target as HTMLElement).closest<HTMLElement>("[data-seat-index]");
+    if (!target || target.dataset.seatFilled !== "true") return;
+    dragFrom.current = seatRefFromPoint(e.clientX, e.clientY);
+  }
+
+  function handleChartPointerUp(e: React.PointerEvent) {
+    const from = dragFrom.current;
+    dragFrom.current = null;
+    if (!from) return;
+    const to = seatRefFromPoint(e.clientX, e.clientY);
+    // Released on the same seat (or outside any seat): leave it to the click
+    // handler, so a plain click still means "pick this guest up".
+    if (!to || sameSeat(from, to)) return;
+    suppressNextClick.current = true;
+    void applySwap(from, to);
   }
 
   function resetToOptimised() {
@@ -541,7 +588,8 @@ export default function Step3Results({
       </h2>
       {status === "done" && (
         <p className="print:hidden text-center text-slate-500 mb-6">
-          Now make it your own — tap any two seats to swap the guests over.
+          Now make it your own — drag a guest onto another seat to swap them over, or
+          tap one seat and then the other.
         </p>
       )}
 
@@ -683,7 +731,11 @@ export default function Step3Results({
           )}
 
           {view === "chart" ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-1 gap-8 print:gap-6">
+            <div
+              className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-1 gap-8 print:gap-6"
+              onPointerDown={handleChartPointerDown}
+              onPointerUp={handleChartPointerUp}
+            >
               {tables.map((table) => (
                 <div
                   key={table.id}
@@ -699,6 +751,7 @@ export default function Step3Results({
                       numRows={table.type === "theatre" ? table.num_rows : undefined}
                       headSeat={table.type === "banquet" ? table.head_seat : undefined}
                       footSeat={table.type === "banquet" ? table.foot_seat : undefined}
+                      tableId={String(table.id)}
                       seatNames={seatNamesForTable(result, table.id)}
                       highlightedSeats={
                         matchingGuestIds

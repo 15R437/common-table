@@ -320,17 +320,20 @@ const splitTagCell = (raw: string) =>
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
 
-// A household of two is seated together; a household of three or more is only
-// nudged onto the same table. This mirrors how the backend scores the two
-// relationships: must_sit_together is satisfied only by genuinely adjacent
-// seats (adjacency == 1), which three or more people cannot all be, so turning
-// a whole family into must_sit_together pairs would guarantee violations the
-// results page then has to report. could_sit_together is satisfied by any
-// same-table seating, which is what "keep this family together" actually means.
-const MUST_SIT_TOGETHER_PARTY_SIZE = 2;
-// Beyond this, a party cannot share a table on any realistic table size, so
-// pairing them up adds noise rather than signal.
-const MAX_PARTY_SIZE_FOR_CONSTRAINTS = 10;
+// A household of exactly two becomes a must_sit_together constraint -- a couple,
+// or a pair of siblings -- because must_sit_together is satisfied only by
+// genuinely adjacent seats (adjacency == 1), which is exactly what seating two
+// people from one household means.
+//
+// A household of three or more becomes a shared *tag* instead, not a
+// constraint. Three people cannot all be adjacent, so must_sit_together would
+// guarantee violations; and could_sit_together is the user's own channel for
+// knowledge the tags don't capture ("Alice and Bob get on particularly well").
+// Filling it with dozens of inferred household pairs would bury the handful the
+// user added deliberately. A household genuinely is a social group, which is
+// what tags are for, and the relation score's 1/(size - 1) weighting already
+// handles group size gracefully -- so no cap is needed here either.
+const PAIR_SIZE = 2;
 
 export function buildGuestList(
   table: DetectedTable,
@@ -432,35 +435,54 @@ export function buildGuestList(
 
   const constraints: Constraint[] = [];
   if (mapping.partyColumn !== null) {
-    const parties = new Map<string, GuestId[]>();
+    // Indices into `guests`, grouped by household. Index rather than id,
+    // because a larger household's tag is written back onto the guest below.
+    const parties = new Map<string, number[]>();
     entries.forEach((entry, i) => {
       if (!entry.party) return;
       const key = entry.party.toLowerCase();
-      parties.set(key, [...(parties.get(key) ?? []), guests[i].id]);
+      parties.set(key, [...(parties.get(key) ?? []), i]);
     });
 
-    let households = 0;
-    for (const members of parties.values()) {
-      if (members.length < 2 || members.length > MAX_PARTY_SIZE_FOR_CONSTRAINTS) continue;
-      households++;
-      const relationship =
-        members.length === MUST_SIT_TOGETHER_PARTY_SIZE
-          ? "must_sit_together"
-          : "could_sit_together";
-      for (let a = 0; a < members.length; a++) {
-        for (let b = a + 1; b < members.length; b++) {
-          constraints.push({
-            guest_a_id: members[a],
-            guest_b_id: members[b],
-            relationship,
-          });
+    // "Pairs", not "couples": a household of two is as likely to be two siblings
+    // or a parent and child, and the note is shown to the user.
+    let pairs = 0;
+    let groupedHouseholds = 0;
+
+    for (const [key, members] of parties.entries()) {
+      if (members.length < 2) continue;
+
+      if (members.length === PAIR_SIZE) {
+        pairs++;
+        constraints.push({
+          guest_a_id: guests[members[0]].id,
+          guest_b_id: guests[members[1]].id,
+          relationship: "must_sit_together",
+        });
+        continue;
+      }
+
+      groupedHouseholds++;
+      for (const index of members) {
+        // Guarded so a household whose name already matches one of the guest's
+        // group tags doesn't get counted twice in the relation score.
+        if (!guests[index].relation_tags.includes(key)) {
+          guests[index].relation_tags.push(key);
         }
       }
     }
 
-    if (households > 0) {
+    const columnName = table.headers[mapping.partyColumn];
+    if (pairs > 0) {
       notes.push(
-        `${households} ${households === 1 ? "household was" : "households were"} kept together automatically, from the "${table.headers[mapping.partyColumn]}" column.`
+        `${pairs} ${pairs === 1 ? "pair" : "pairs"} from the "${columnName}" column will be seated next to each other.`
+      );
+    }
+    if (groupedHouseholds > 0) {
+      notes.push(
+        groupedHouseholds === 1
+          ? `1 larger household from the "${columnName}" column became a social group, so they're seated near each other without taking up a rule of their own.`
+          : `${groupedHouseholds} larger households from the "${columnName}" column became social groups, so they're seated near each other without taking up a rule of their own.`
       );
     }
   }

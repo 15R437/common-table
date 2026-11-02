@@ -496,8 +496,8 @@ export function buildGuestList(
     if (groupedHouseholds > 0) {
       notes.push(
         groupedHouseholds === 1
-          ? `1 larger household from the "${columnName}" column became a group, so they're seated near each other without taking up a rule of their own.`
-          : `${groupedHouseholds} larger households from the "${columnName}" column became groups, so they're seated near each other without taking up a rule of their own.`
+          ? `1 larger group from the "${columnName}" column will share a table.`
+          : `${groupedHouseholds} larger groups from the "${columnName}" column will share a table.`
       );
     }
   }

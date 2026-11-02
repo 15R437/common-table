@@ -303,14 +303,14 @@ export default function GuestImporter({
             )}
             <ColumnSelect
               label="Group"
-              hint="e.g. family, work, university, interests"
+              hint="Guests who share a value sit closer together, e.g. a social group or an interest"
               headers={headers}
               value={staged.mapping.groupColumn}
               onChange={(next) => updateMapping({ groupColumn: next })}
             />
             <ColumnSelect
-              label="Household"
-              hint="Couples seated together, families kept near each other"
+              label="Keep together"
+              hint="Pairs sit side by side, larger groups share a table"
               headers={headers}
               value={staged.mapping.partyColumn}
               onChange={(next) => updateMapping({ partyColumn: next })}

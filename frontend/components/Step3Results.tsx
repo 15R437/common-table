@@ -609,40 +609,48 @@ export default function Step3Results({
       {status === "done" && result && (
         <>
           {selectedSeat && (
-            <div className="print:hidden mb-6 flex flex-wrap items-center justify-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm">
-              <span className="text-amber-800">
-                <strong>{selectedGuestName}</strong> picked up — now tap the seat to swap them
-                with.
+            <div
+              role="status"
+              className="print:hidden fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4"
+            >
+              <div className="flex flex-wrap items-center justify-center gap-3 bg-amber-50 border border-amber-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
+                <span className="text-amber-800">
+                  <strong>{selectedGuestName}</strong> picked up — now choose the seat to swap
+                  them with.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeat(null)}
+                  className="font-semibold text-amber-800 hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Height is reserved whether or not there is anything to say, so the
+              chart below doesn't jump the first time a message appears. */}
+          <div className="print:hidden mb-4 min-h-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm text-slate-500">
+            {edited && (
+              <>
+                <span>You&apos;ve edited this plan by hand.</span>
+                <button
+                  type="button"
+                  onClick={resetToOptimised}
+                  className="font-semibold text-brand-dark hover:underline"
+                >
+                  Reset to the optimised plan
+                </button>
+              </>
+            )}
+            {rescoreFailed && (
+              <span className="text-amber-700">
+                Your change is saved on screen, but the counts couldn&apos;t be rechecked just
+                now.
               </span>
-              <button
-                type="button"
-                onClick={() => setSelectedSeat(null)}
-                className="font-semibold text-amber-800 hover:underline"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {edited && (
-            <div className="print:hidden mb-6 flex flex-wrap items-center justify-center gap-3 text-sm text-slate-500">
-              <span>You&apos;ve edited this plan by hand.</span>
-              <button
-                type="button"
-                onClick={resetToOptimised}
-                className="font-semibold text-brand-dark hover:underline"
-              >
-                Reset to the optimised plan
-              </button>
-            </div>
-          )}
-
-          {rescoreFailed && (
-            <p className="print:hidden mb-6 text-sm text-amber-700 text-center">
-              Your seating change is saved on screen, but the counts below couldn&apos;t be
-              rechecked just now.
-            </p>
-          )}
+            )}
+          </div>
 
           <div className="flex flex-wrap gap-4 justify-center mb-6 text-sm">
             <span className="bg-slate-50 rounded-lg px-3 py-2">
@@ -658,29 +666,6 @@ export default function Step3Results({
               {result.must_sit_apart.total}
             </span>
           </div>
-
-          {violationCount > 0 && (
-            <div className="mb-8 text-sm text-amber-700 bg-amber-50 rounded-lg p-4 max-w-2xl mx-auto">
-              <p className="font-semibold mb-2">
-                {violationCount} &quot;must&quot; constraint{violationCount === 1 ? "" : "s"} couldn&apos;t be
-                satisfied:
-              </p>
-              <ul className="list-disc list-inside space-y-1 max-h-48 overflow-y-auto">
-                {result.must_sit_together_violations.map((v, i) => (
-                  <li key={`together-${i}`}>
-                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
-                    sit together, but don&apos;t.
-                  </li>
-                ))}
-                {result.must_sit_apart_violations.map((v, i) => (
-                  <li key={`apart-${i}`}>
-                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
-                    sit apart, but are {sharedSeatingUnit}.
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
 
           <div className="print:hidden flex flex-wrap gap-3 items-center justify-between mb-6">
             <div className="inline-flex rounded-full border border-slate-200 p-1 bg-white">
@@ -847,6 +832,31 @@ export default function Step3Results({
             </div>
           )}
         </>
+      )}
+
+      {status === "done" && result && violationCount > 0 && (
+        <div className="print:hidden">
+            <div className="mt-8 text-sm text-amber-700 bg-amber-50 rounded-lg p-4 max-w-2xl mx-auto">
+              <p className="font-semibold mb-2">
+                {violationCount} &quot;must&quot; constraint{violationCount === 1 ? "" : "s"} couldn&apos;t be
+                satisfied:
+              </p>
+              <ul className="list-disc list-inside space-y-1 max-h-48 overflow-y-auto">
+                {result.must_sit_together_violations.map((v, i) => (
+                  <li key={`together-${i}`}>
+                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
+                    sit together, but don&apos;t.
+                  </li>
+                ))}
+                {result.must_sit_apart_violations.map((v, i) => (
+                  <li key={`apart-${i}`}>
+                    <strong>{v.guest_a.name}</strong> and <strong>{v.guest_b.name}</strong> should
+                    sit apart, but are {sharedSeatingUnit}.
+                  </li>
+                ))}
+              </ul>
+            </div>
+        </div>
       )}
 
       {status === "done" && result && (

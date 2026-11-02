@@ -249,48 +249,95 @@ export default function TableDiagram({
                 ? `Seat ${seat.seatIndex}${name ? `, ${name}` : ", empty"}`
                 : undefined
             }
-            className={onSeatClick ? "cursor-grab" : undefined}
+            // The browser's default focus ring draws as a rectangle around the
+            // whole group -- seat, name and all -- which looked like a stray box
+            // on the chart. focus-visible keeps a ring for keyboard users
+            // without showing one on every mouse click, where the seat lifting
+            // is already the feedback.
+            className={
+              onSeatClick
+                ? `select-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 ${
+                    isSelected ? "cursor-grabbing" : "cursor-grab"
+                  }`
+                : "select-none"
+            }
           >
-            <circle
-              cx={seat.x}
-              cy={seat.y}
-              r={radius}
-              className={
-                isSelected
-                  ? "fill-brand-dark stroke-amber-500"
-                  : isMatch
+            {onSeatClick && (
+              <circle
+                cx={seat.x}
+                cy={seat.y}
+                r={SEAT_R * 1.7}
+                fill="transparent"
+              />
+            )}
+            {/* The guest a user has picked up is drawn lifted off the table,
+                with the empty chair they came from still showing beneath and a
+                cast shadow between the two. A colour change alone wasn't
+                reading as "held" -- the seat has to look detached. */}
+            {isSelected && (
+              <>
+                <circle
+                  cx={seat.x}
+                  cy={seat.y}
+                  r={SEAT_R}
+                  className="fill-white stroke-amber-400"
+                  strokeDasharray="3 3"
+                  strokeWidth={2}
+                />
+                <ellipse
+                  cx={seat.x}
+                  cy={seat.y + SEAT_R * 0.5}
+                  rx={radius * 0.85}
+                  ry={radius * 0.3}
+                  className="fill-slate-900/25"
+                />
+              </>
+            )}
+            <g
+              transform={isSelected ? `translate(0 ${-SEAT_R * 0.85})` : undefined}
+              className={isSelected ? "drop-shadow-lg" : undefined}
+            >
+              <circle
+                cx={seat.x}
+                cy={seat.y}
+                r={radius}
+                className={
+                  isSelected
                     ? "fill-amber-500 stroke-amber-600"
-                    : filled
-                      ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
-                      : "fill-white stroke-slate-400"
-              }
-              strokeWidth={isMatch || isSelected ? 3 : 1.5}
-            />
-            {!compact && (
-              <text
-                x={seat.x}
-                y={seat.y}
-                textAnchor="middle"
-                dominantBaseline="central"
-                className={`${filled ? "fill-white" : "fill-slate-400"} ${isDimmed ? "opacity-25" : ""}`}
-                fontSize={10}
-              >
-                {seat.seatIndex}
-              </text>
-            )}
-            {!compact && name && (
-              <text
-                x={seat.labelX}
-                y={seat.labelY}
-                textAnchor={seat.anchor}
-                dominantBaseline={seat.baseline}
-                className={`fill-slate-700 ${isDimmed ? "opacity-25" : ""}`}
-                fontSize={isMatch ? 12 : 11}
-                fontWeight={isMatch ? 700 : 500}
-              >
-                {name}
-              </text>
-            )}
+                    : isMatch
+                      ? "fill-amber-500 stroke-amber-600"
+                      : filled
+                        ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
+                        : "fill-white stroke-slate-400"
+                }
+                strokeWidth={isMatch || isSelected ? 3 : 1.5}
+              />
+              {!compact && (
+                <text
+                  x={seat.x}
+                  y={seat.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  className={`${filled ? "fill-white" : "fill-slate-400"} ${isDimmed ? "opacity-25" : ""}`}
+                  fontSize={10}
+                >
+                  {seat.seatIndex}
+                </text>
+              )}
+              {!compact && name && (
+                <text
+                  x={seat.labelX}
+                  y={seat.labelY}
+                  textAnchor={seat.anchor}
+                  dominantBaseline={seat.baseline}
+                  className={`${isSelected ? "fill-amber-700" : "fill-slate-700"} ${isDimmed ? "opacity-25" : ""}`}
+                  fontSize={isMatch || isSelected ? 12 : 11}
+                  fontWeight={isMatch || isSelected ? 700 : 500}
+                >
+                  {name}
+                </text>
+              )}
+            </g>
           </g>
         );
       })}

@@ -184,3 +184,23 @@ backend/scripts/outputs/*
 !backend/scripts/outputs/banquet_definitive.png
 !backend/scripts/outputs/constraint_density_definitive.png
 backend/scripts/data/
+
+# Brand asset archive. The source bundle stays out of git; the few files the
+# site actually serves are committed under frontend/public/brand/ and frontend/app/.
+*.zip
+
+# macOS folder metadata. Committed by accident once; it serves no purpose in a
+# repo and reappears in every directory Finder has been opened in.
+.DS_Store
+
+# Virtualenvs. "venv/" was already covered; my_venv is an older Python 3.9 one.
+my_venv/
+.venv/
+
+# The old Flask prototype's SQLite database, and any other local database file.
+*.db
+*.sqlite3
+
+# Figures written by plotting runs at the repo root. The two figures the README
+# cites live under backend/scripts/outputs/ and are committed explicitly above.
+/outputs/

@@ -16,8 +16,14 @@ interface TableDiagramProps {
   // The seat the user has picked up, mid-swap. Styled distinctly from a search
   // match: a match is "look here", a selection is "this one is in your hand".
   selectedSeat?: number | null;
-  // Stamped onto the rendered SVG as data-table-id so a pointer landing
-  // anywhere inside it can be traced back to this table (see Step3Results).
+  // Seats that have just been swapped. Held in a different colour for a few
+  // seconds so the eye can find where the change happened -- two names quietly
+  // changing in a chart of 120 is easy to miss. Deliberately a static colour
+  // change rather than an animation: a pulse on the page for several seconds
+  // reads as an alarm, not a confirmation.
+  flashedSeats?: Set<number> | null;
+  // Rendered as data-table-id, which with each seat's data-seat-index makes
+  // every seat addressable from outside the SVG for tests and debugging.
   tableId?: string;
 }
 
@@ -174,6 +180,7 @@ export default function TableDiagram({
   onSeatClick,
   highlightedSeats = null,
   selectedSeat = null,
+  flashedSeats = null,
   tableId,
 }: TableDiagramProps) {
   const layout =
@@ -225,12 +232,12 @@ export default function TableDiagram({
         const isMatch = searchActive && highlightedSeats.has(seat.seatIndex);
         const isDimmed = searchActive && filled && !isMatch;
         const isSelected = selectedSeat === seat.seatIndex;
+        const isFlashed = flashedSeats?.has(seat.seatIndex) ?? false;
         const radius = isMatch || isSelected ? SEAT_R * 1.3 : SEAT_R;
         return (
           <g
             key={seat.seatIndex}
             data-seat-index={onSeatClick ? seat.seatIndex : undefined}
-            data-seat-filled={onSeatClick && filled ? "true" : undefined}
             onClick={onSeatClick ? () => onSeatClick(seat.seatIndex) : undefined}
             onKeyDown={
               onSeatClick
@@ -256,9 +263,7 @@ export default function TableDiagram({
             // is already the feedback.
             className={
               onSeatClick
-                ? `select-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 ${
-                    isSelected ? "cursor-grabbing" : "cursor-grab"
-                  }`
+                ? `select-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 cursor-pointer`
                 : "select-none"
             }
           >
@@ -304,8 +309,10 @@ export default function TableDiagram({
                 className={
                   isSelected
                     ? "fill-amber-500 stroke-amber-600"
-                    : isMatch
-                      ? "fill-amber-500 stroke-amber-600"
+                    : isFlashed
+                      ? "fill-emerald-600 stroke-emerald-700"
+                      : isMatch
+                        ? "fill-amber-500 stroke-amber-600"
                       : filled
                         ? `fill-brand-dark stroke-brand-dark ${isDimmed ? "opacity-25" : ""}`
                         : "fill-white stroke-slate-400"

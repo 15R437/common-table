@@ -334,7 +334,7 @@ function FeedbackPrompt({
   );
 }
 
-/** One guest in the list view: tappable to swap, and draggable with a mouse. */
+/** One guest in the list view: tap to pick up, tap another to swap. */
 function SeatListRow({
   seat,
   position,
@@ -342,7 +342,7 @@ function SeatListRow({
   isMatch,
   selectedSeat,
   onActivate,
-  onDropOn,
+  justSwapped,
 }: {
   seat: SeatRef;
   position: number;
@@ -350,27 +350,12 @@ function SeatListRow({
   isMatch: boolean;
   selectedSeat: SeatRef | null;
   onActivate: (seat: SeatRef) => void;
-  onDropOn: (from: SeatRef, to: SeatRef) => void;
+  justSwapped: boolean;
 }) {
   const isSelected = selectedSeat != null && sameSeat(selectedSeat, seat);
 
   return (
     <li
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData("text/plain", JSON.stringify(seat));
-        e.dataTransfer.effectAllowed = "move";
-      }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        try {
-          const from = JSON.parse(e.dataTransfer.getData("text/plain")) as SeatRef;
-          if (!sameSeat(from, seat)) onDropOn(from, seat);
-        } catch {
-          // Something other than a seat was dropped -- ignore it.
-        }
-      }}
       onClick={() => onActivate(seat)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -381,12 +366,14 @@ function SeatListRow({
       role="button"
       tabIndex={0}
       aria-pressed={isSelected}
-      className={`flex justify-between py-1.5 -mx-2 px-2 rounded cursor-grab print:cursor-auto transition-colors ${
+      className={`flex justify-between py-1.5 -mx-2 px-2 rounded cursor-pointer print:cursor-auto transition-colors duration-500 ${
         isSelected
           ? "bg-amber-100 ring-2 ring-amber-400"
-          : isMatch
-            ? "bg-brand-light"
-            : "hover:bg-slate-50"
+          : justSwapped
+            ? "bg-emerald-100"
+            : isMatch
+              ? "bg-brand-light"
+              : "hover:bg-slate-50"
       }`}
     >
       <span className="text-slate-400 w-8">{position}</span>
@@ -417,6 +404,15 @@ export default function Step3Results({
   // without paying for another solve.
   const [optimisedResult, setOptimisedResult] = useState<SeatingResponse | null>(null);
   const [selectedSeat, setSelectedSeat] = useState<SeatRef | null>(null);
+  // The swap just made: drives the confirmation bar and the flash on the two
+  // seats. Names are captured at swap time because the guests have moved by the
+  // time it renders, so reading them back out of the arrangement would describe
+  // the new occupants rather than who was exchanged.
+  const [lastSwap, setLastSwap] = useState<{
+    from: SeatRef;
+    to: SeatRef;
+    names: [string, string];
+  } | null>(null);
   const [edited, setEdited] = useState(false);
   const [rescoreFailed, setRescoreFailed] = useState(false);
 
@@ -448,6 +444,7 @@ export default function Step3Results({
       setResult(response);
       setOptimisedResult(response);
       setSelectedSeat(null);
+      clearSwapConfirmation();
       setEdited(false);
       setRescoreFailed(false);
     } catch (e) {
@@ -457,12 +454,12 @@ export default function Step3Results({
     }
   }
 
-  // Tap one seat then another, rather than drag only: the same gesture has to
-  // work on a phone, where a wedding plan is as likely to be tweaked as on a
-  // laptop, and HTML5 drag events don't fire on touch at all.
+  // Tap one seat, then another. Chosen over dragging because tables can sit
+  // hundreds of pixels apart -- the seat being swapped to is usually off screen
+  // when it's chosen, so a drag would have to scroll mid-gesture -- and because
+  // the same gesture then works on a phone and from the keyboard.
   async function handleSeatActivate(seat: SeatRef) {
     if (!result) return;
-    if (suppressNextClick.current) return;
 
     if (!selectedSeat) {
       // An empty seat can't start a swap -- there's nobody in it to move.
@@ -477,11 +474,22 @@ export default function Step3Results({
     await applySwap(selectedSeat, seat);
   }
 
-  async function applySwap(from: SeatRef, to: SeatRef) {
+  async function applySwap(from: SeatRef, to: SeatRef, isUndo = false) {
     if (!result) return;
+    const movedName = result.table_assignments[from.tableId]?.[String(from.seatIndex)]?.name;
+    const displacedName = result.table_assignments[to.tableId]?.[String(to.seatIndex)]?.name;
     const swapped = withSeatsSwapped(result.table_assignments, from, to);
     setSelectedSeat(null);
     setEdited(true);
+    if (isUndo) {
+      clearSwapConfirmation();
+    } else {
+      showSwapConfirmation({
+        from,
+        to,
+        names: [movedName ?? "that guest", displacedName ?? "the empty seat"],
+      });
+    }
     // Shown immediately, then re-scored: the seats are the user's to move, so
     // the chart should never wait on the network to reflect what they just did.
     setResult({ ...result, table_assignments: swapped });
@@ -503,56 +511,45 @@ export default function Step3Results({
     }
   }
 
-  // Dragging in the chart is handled here rather than per-seat, because one
-  // handler on the grid can resolve any seat in any table from the data
-  // attributes TableDiagram stamps on. HTML5 drag-and-drop isn't used: it is
-  // unreliable on SVG and never fires on touch at all.
-  const dragFrom = useRef<SeatRef | null>(null);
-  // A drag ends in a click event too. Without this the swap would be followed
-  // by the tap handler picking the dropped-on seat straight back up.
-  const suppressNextClick = useRef(false);
+  const confirmationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
+    },
+    []
+  );
 
-  function seatRefFromPoint(x: number, y: number): SeatRef | null {
-    const element = document.elementFromPoint(x, y);
-    const seat = element?.closest<HTMLElement>("[data-seat-index]");
-    const table = element?.closest<HTMLElement>("[data-table-id]");
-    if (!seat || !table) return null;
-    const tableId = table.dataset.tableId;
-    const seatIndex = Number(seat.dataset.seatIndex);
-    if (tableId === undefined || Number.isNaN(seatIndex)) return null;
-    return { tableId, seatIndex };
+  function showSwapConfirmation(next: NonNullable<typeof lastSwap>) {
+    if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
+    setLastSwap(next);
+    confirmationTimer.current = setTimeout(() => setLastSwap(null), 5000);
   }
 
-  function handleChartPointerDown(e: React.PointerEvent) {
-    // Cleared at the start of every interaction rather than when the suppressed
-    // click arrives, because a drag between two different elements fires no
-    // click at all -- the flag would otherwise survive and swallow the next
-    // genuine tap instead.
-    suppressNextClick.current = false;
-    // Mouse only. On touch, starting a drag would have to cancel page
-    // scrolling to work, and tapping two seats already does the job there.
-    if (e.pointerType !== "mouse") return;
-    const target = (e.target as HTMLElement).closest<HTMLElement>("[data-seat-index]");
-    if (!target || target.dataset.seatFilled !== "true") return;
-    dragFrom.current = seatRefFromPoint(e.clientX, e.clientY);
+  function clearSwapConfirmation() {
+    if (confirmationTimer.current) clearTimeout(confirmationTimer.current);
+    setLastSwap(null);
   }
 
-  function handleChartPointerUp(e: React.PointerEvent) {
-    const from = dragFrom.current;
-    dragFrom.current = null;
-    if (!from) return;
-    const to = seatRefFromPoint(e.clientX, e.clientY);
-    // Released on the same seat (or outside any seat): leave it to the click
-    // handler, so a plain click still means "pick this guest up".
-    if (!to || sameSeat(from, to)) return;
-    suppressNextClick.current = true;
-    void applySwap(from, to);
+  /** True while a seat should show the "this just changed" flash. */
+  function justSwappedSeat(tableId: string, seatIndex: number) {
+    if (!lastSwap) return false;
+    const seat = { tableId, seatIndex };
+    return sameSeat(lastSwap.from, seat) || sameSeat(lastSwap.to, seat);
+  }
+
+  function flashedSeatsForTable(tableId: string): Set<number> | null {
+    if (!lastSwap) return null;
+    const seats = new Set<number>();
+    if (lastSwap.from.tableId === tableId) seats.add(lastSwap.from.seatIndex);
+    if (lastSwap.to.tableId === tableId) seats.add(lastSwap.to.seatIndex);
+    return seats.size > 0 ? seats : null;
   }
 
   function resetToOptimised() {
     if (!optimisedResult) return;
     setResult(optimisedResult);
     setSelectedSeat(null);
+    clearSwapConfirmation();
     setEdited(false);
     setRescoreFailed(false);
   }
@@ -588,8 +585,8 @@ export default function Step3Results({
       </h2>
       {status === "done" && (
         <p className="print:hidden text-center text-slate-500 mb-6">
-          Now make it your own — drag a guest onto another seat to swap them over, or
-          tap one seat and then the other.
+          Now make it your own — tap a guest, then tap the seat you&apos;d like them to
+          swap with.
         </p>
       )}
 
@@ -608,24 +605,45 @@ export default function Step3Results({
 
       {status === "done" && result && (
         <>
-          {selectedSeat && (
+          {/* One fixed bar, two states, so confirming a swap replaces the
+              pick-up prompt in place rather than adding anything to the page. */}
+          {(selectedSeat || lastSwap) && (
             <div
               role="status"
+              aria-live="polite"
               className="print:hidden fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4"
             >
-              <div className="flex flex-wrap items-center justify-center gap-3 bg-amber-50 border border-amber-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
-                <span className="text-amber-800">
-                  <strong>{selectedGuestName}</strong> picked up — now choose the seat to swap
-                  them with.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSeat(null)}
-                  className="font-semibold text-amber-800 hover:underline"
-                >
-                  Cancel
-                </button>
-              </div>
+              {selectedSeat ? (
+                <div className="flex flex-wrap items-center justify-center gap-3 bg-amber-50 border border-amber-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
+                  <span className="text-amber-800">
+                    <strong>{selectedGuestName}</strong> picked up — now choose the seat to swap
+                    them with.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSeat(null)}
+                    className="font-semibold text-amber-800 hover:underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                lastSwap && (
+                  <div className="flex flex-wrap items-center justify-center gap-3 bg-emerald-50 border border-emerald-200 shadow-brand-glow rounded-full px-5 py-3 text-sm">
+                    <span className="text-emerald-900">
+                      Swapped <strong>{lastSwap.names[0]}</strong> and{" "}
+                      <strong>{lastSwap.names[1]}</strong>.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void applySwap(lastSwap.from, lastSwap.to, true)}
+                      className="font-semibold text-emerald-900 hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                )
+              )}
             </div>
           )}
 
@@ -716,11 +734,7 @@ export default function Step3Results({
           )}
 
           {view === "chart" ? (
-            <div
-              className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-1 gap-8 print:gap-6"
-              onPointerDown={handleChartPointerDown}
-              onPointerUp={handleChartPointerUp}
-            >
+            <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-1 gap-8 print:gap-6">
               {tables.map((table) => (
                 <div
                   key={table.id}
@@ -748,6 +762,7 @@ export default function Step3Results({
                           ? selectedSeat.seatIndex
                           : null
                       }
+                      flashedSeats={flashedSeatsForTable(String(table.id))}
                       onSeatClick={(seatIndex) =>
                         handleSeatActivate({ tableId: String(table.id), seatIndex })
                       }
@@ -791,7 +806,7 @@ export default function Step3Results({
                                   isMatch={matchingGuestIds?.has(guest.id) ?? false}
                                   selectedSeat={selectedSeat}
                                   onActivate={handleSeatActivate}
-                                  onDropOn={applySwap}
+                                  justSwapped={justSwappedSeat(String(table.id), seatIndex)}
                                 />
                               ))}
                             </ul>
@@ -822,7 +837,7 @@ export default function Step3Results({
                           isMatch={matchingGuestIds?.has(guest.id) ?? false}
                           selectedSeat={selectedSeat}
                           onActivate={handleSeatActivate}
-                          onDropOn={applySwap}
+                          justSwapped={justSwappedSeat(String(table.id), seatIndex)}
                         />
                       ))}
                     </ul>

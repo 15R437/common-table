@@ -230,9 +230,11 @@ const GROUP_CANDIDATES = [
   "affiliation", "institution", "school", "faculty", "track", "topic",
   "relation", "relationship",
 ];
+// Matched against the whole header, so each real spelling is listed in full.
 const PARTY_CANDIDATES = [
-  "party", "household", "party name", "invite", "invitation", "family",
-  "party id", "group name", "invite group", "booking",
+  "party", "household", "household id", "household name", "party household",
+  "party or household", "party name", "party id", "invite group",
+  "invitation group", "family", "booking",
 ];
 const RSVP_CANDIDATES = [
   "rsvp", "rsvp status", "attending", "status", "response", "coming", "reply",
@@ -240,7 +242,12 @@ const RSVP_CANDIDATES = [
   "registered", "registration", "confirmed", "booked",
 ];
 
-function bestMatch(headers: string[], candidates: string[], exclude: number[] = []): number | null {
+function bestMatch(
+  headers: string[],
+  candidates: string[],
+  exclude: number[] = [],
+  { exactOnly = false }: { exactOnly?: boolean } = {}
+): number | null {
   const normalised = headers.map(normalise);
   // Candidate order is the priority order, so scan candidates in the outer loop
   // -- the first candidate with any match wins over a later, vaguer one.
@@ -248,6 +255,10 @@ function bestMatch(headers: string[], candidates: string[], exclude: number[] = 
     const exact = normalised.findIndex((h, i) => h === candidate && !exclude.includes(i));
     if (exact !== -1) return exact;
   }
+  // Substring matching is what lets "Guest Name (full)" find "name", but it also
+  // lets a qualifier through: "party size" contains "party". Roles whose wrong
+  // answer is expensive opt out of this pass.
+  if (exactOnly) return null;
   for (const candidate of candidates) {
     const partial = normalised.findIndex(
       (h, i) => h.includes(candidate) && !exclude.includes(i)
@@ -257,25 +268,18 @@ function bestMatch(headers: string[], candidates: string[], exclude: number[] = 
   return null;
 }
 
-// A keep-together column is validated by the shape of its values, not just its
-// name. "Party size" matches the word "party" but holds a headcount, and
-// reading it as households seats whoever happens to share a number next to each
-// other -- on a test list it produced a hard must_sit_together between two
-// strangers who were both party-of-one. Three of the four widely-recommended
-// wedding templates ship a "Party size" column, so this is the common case,
-// not an edge one.
+// The keep-together column is matched on the whole header, never on a fragment
+// of it. "Party size" holds a headcount and matched the word "party", so
+// whoever shared a number was read as one household: on a test list that put a
+// hard must_sit_together between two guests who were both party-of-one, seating
+// strangers side by side. Three of the four widely-recommended wedding
+// templates ship such a column.
 //
-// The two checks catch different things and neither covers the other:
-//
-//  - looksLikeACount catches a small set of low integers, which is a headcount
-//    whatever the list's length. Cluster shape can't catch this on a short
-//    list, where a real household and a party-of-four look identical.
-//  - clustersLikeHouseholds catches columns whose values group too many people
-//    to be a household, such as Side or Tier, and columns where nothing repeats
-//    at all. Those pass the count check because they aren't numbers.
-//
-// Deliberately restricted to a column chosen by guessing. A column the user
-// picked themselves is respected as given.
+// Every mapping is a dropdown the user confirms, so a guess only has to be
+// conservative, not clever. Requiring the full header to match is what keeps
+// "Party size" out while "Party" and "Household" still fill themselves in, and
+// it is a rule that can be explained in a sentence. The one extra check is for
+// a column genuinely headed "Party" that holds numbers anyway.
 
 /** Values that are a handful of small integers: a headcount, not an identifier. */
 function looksLikeACount(values: string[]): boolean {
@@ -285,31 +289,6 @@ function looksLikeACount(values: string[]): boolean {
   // A household column keyed by number would run to one value per household, so
   // a handful of distinct values is what separates a count from an identifier.
   return new Set(values).size <= 6;
-}
-
-/** No household holds 11 people, or a quarter of the guest list. */
-const MAX_PLAUSIBLE_HOUSEHOLD = 10;
-const MAX_SHARE_OF_LIST = 0.25;
-// Below this the share test is meaningless: on an eight-row list a single
-// household of three is already more than a quarter of it.
-const MIN_ROWS_FOR_SHARE_TEST = 12;
-
-function clustersLikeHouseholds(values: string[]): boolean {
-  if (values.length === 0) return false;
-  const counts = new Map<string, number>();
-  for (const value of values) {
-    const key = value.toLowerCase();
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const largest = Math.max(...counts.values());
-  // Nothing repeats, so there are no households in it to find. This is what a
-  // booking reference looks like, and also a sheet with one row per household.
-  if (largest < 2) return false;
-  if (largest > MAX_PLAUSIBLE_HOUSEHOLD) return false;
-  if (values.length >= MIN_ROWS_FOR_SHARE_TEST && largest > values.length * MAX_SHARE_OF_LIST) {
-    return false;
-  }
-  return true;
 }
 
 const ATTENDING_VALUES = new Set([
@@ -342,16 +321,15 @@ export function guessMapping(table: DetectedTable): ColumnMapping {
   let partyColumn = bestMatch(
     headers,
     PARTY_CANDIDATES,
-    [nameColumn, firstNameColumn, lastNameColumn].filter((i): i is number => i !== null)
+    [nameColumn, firstNameColumn, lastNameColumn].filter((i): i is number => i !== null),
+    { exactOnly: true }
   );
 
   if (partyColumn !== null) {
     const values = rows
       .map((row) => (row[partyColumn as number] ?? "").trim())
       .filter(Boolean);
-    if (looksLikeACount(values) || !clustersLikeHouseholds(values)) {
-      partyColumn = null;
-    }
+    if (looksLikeACount(values)) partyColumn = null;
   }
   // A column already doing duty as the household must not double as the group
   // tag: it would tag every household uniquely, giving every guest a tag shared

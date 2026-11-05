@@ -13,8 +13,8 @@
   --color-nav: var(--nav-bg);
   --color-brand-dark: var(--brand-dark);
   --color-brand-light: var(--brand-light);
-  --font-sans: var(--font-inter);
-  --font-display: var(--font-oswald);
+  --font-sans: var(--font-libre-franklin);
+  --font-display: var(--font-big-shoulders);
   --shadow-brand-glow: 0 10px 15px -3px rgba(var(--brand-dark-rgb), 0.15),
     0 4px 6px -2px rgba(var(--brand-dark-rgb), 0.08);
 }
